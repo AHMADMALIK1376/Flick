@@ -18,7 +18,6 @@ import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
 import { resolveModelCacheDir, describeModelCacheDir } from './model-paths';
 import { ModelDownloader } from './model-downloader';
-import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
 import { SettingsStore } from './settings-store';
 import { HistoryStore } from './history-store';
@@ -59,7 +58,6 @@ let lastLoggedModelDir: string | null = null;
 
 const settingsStoreInstance = new SettingsStore();
 const historyStoreInstance = new HistoryStore();
-const modelManager = new ModelManager();
 const whisperService = new WhisperService();
 const clipboardManager = new ClipboardManager();
 const trayManager = new TrayManager();
