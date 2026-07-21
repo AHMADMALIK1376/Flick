@@ -21,6 +21,19 @@ export function resolveModelId(name?: string | null): string {
   return name.includes('/') ? name : `Xenova/whisper-${name}`;
 }
 
+/**
+ * Every model the app can load, largest first.
+ *
+ * Order matters: fallback prefers the most capable model already on disk,
+ * since a bigger model is the better answer for Urdu.
+ */
+const KNOWN_MODEL_IDS = [
+  'Xenova/whisper-medium',
+  'Xenova/whisper-small',
+  'Xenova/whisper-base',
+  'Xenova/whisper-tiny',
+];
+
 /** Required files for a Whisper ONNX model variant */
 const WHISPER_REQUIRED_FILES = [
   'onnx/encoder_model_quantized.onnx',
@@ -46,6 +59,19 @@ export class WhisperService {
   }
 
   /**
+   * Returns the most capable model already present in the cache, or undefined
+   * if none are.
+   *
+   * Selecting a model in Settings does not download it, so the chosen model can
+   * legitimately be absent. Falling back beats refusing to transcribe.
+   */
+  static findDownloadedModel(cacheDir: string): string | undefined {
+    return KNOWN_MODEL_IDS.find((id) =>
+      WhisperService.isModelReady(cacheDir, id)
+    );
+  }
+
+  /**
    * Check if all required ONNX model files exist in the cache directory.
    * Uses `--` separator matching @xenova/transformers cache convention.
    */
@@ -62,7 +88,25 @@ export class WhisperService {
     modelId?: string;
     onProgress?: (data: ProgressData) => void;
   }): Promise<void> {
-    const modelId = options?.modelId ?? DEFAULT_MODEL_ID;
+    const cacheDir = options?.cacheDir;
+    const requested = options?.modelId ?? DEFAULT_MODEL_ID;
+
+    // Resolve the model actually loadable BEFORE the already-loaded check.
+    // Doing it after would compare against the requested id rather than the
+    // one in memory, and reload on every call whenever a fallback is in use.
+    let modelId = requested;
+    if (cacheDir && !WhisperService.isModelReady(cacheDir, requested)) {
+      const fallback = WhisperService.findDownloadedModel(cacheDir);
+      if (!fallback) {
+        throw new Error(
+          'No Whisper model is downloaded. Complete onboarding to fetch one.'
+        );
+      }
+      console.warn(
+        `[Whisper] ${requested} is not downloaded; using ${fallback} instead.`
+      );
+      modelId = fallback;
+    }
 
     // Already holding this exact model, or a load is in flight.
     if ((this.initialized && loadedModelId === modelId) || loading) return;
@@ -81,7 +125,6 @@ export class WhisperService {
       const dynamicImport = new Function('specifier', 'return import(specifier)');
       const transformers = await dynamicImport('@xenova/transformers');
 
-      const cacheDir = options?.cacheDir;
       const onProgress = options?.onProgress;
 
       if (cacheDir) {
@@ -92,12 +135,6 @@ export class WhisperService {
         transformers.env.allowRemoteModels = false;
         transformers.env.useBrowserCache = false;
 
-        // Verify model files exist before attempting to load
-        if (!WhisperService.isModelReady(cacheDir, modelId)) {
-          throw new Error(
-            `Model files for ${modelId} not found. Download it from Settings, or complete onboarding.`
-          );
-        }
       } else if (onProgress) {
         // Legacy path: allow local models when progress callback is provided
         transformers.env.allowLocalModels = true;

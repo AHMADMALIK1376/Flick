@@ -62,7 +62,7 @@ const settingsStore = new Store<Settings>({
   defaults: {
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
-    modelName: 'base',
+    modelName: 'medium',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
