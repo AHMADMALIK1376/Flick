@@ -6,6 +6,7 @@ const defaults: Settings = {
   hotkeyMode: 'toggle',
   // Must match what onboarding downloads, or first-run voice fails.
   modelName: 'medium',
+  modelCacheDir: '',
   language: 'en',
   autoCopyToClipboard: true,
   showFloatingWidget: true,

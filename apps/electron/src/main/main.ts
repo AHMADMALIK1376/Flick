@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
+import { resolveModelCacheDir } from './model-paths';
 import { ModelDownloader } from './model-downloader';
 import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
@@ -27,7 +28,23 @@ import type { ProviderId } from './agent/llm/providers/llm-provider';
 
 // ── Model Cache Directory ───────────────────────────────────────────────────
 
-const MODEL_CACHE_DIR = path.join(app.getPath('userData'), 'models', 'onnx');
+/**
+ * Where Whisper model files live. Read on each use rather than captured once,
+ * so changing the location in Settings takes effect without a restart.
+ *
+ * Creates the directory on demand — the user may point this at a drive path
+ * that does not exist yet.
+ */
+function getModelCacheDir(): string {
+  const dir = resolveModelCacheDir(
+    settingsStore.get('modelCacheDir'),
+    app.getPath('userData'),
+  );
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
 
 // ── Stores & Services ───────────────────────────────────────────────────────
 
@@ -74,6 +91,7 @@ const settingsStore = new Store<Settings>({
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
     modelName: 'medium',
+    modelCacheDir: '',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
@@ -470,7 +488,7 @@ function setupIPC(): void {
       // Initialize whisper service if needed
       if (!whisperService.isInitialized()) {
         await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
       }
@@ -583,7 +601,7 @@ function setupIPC(): void {
     if (!modelId.includes('/')) {
       modelId = `Xenova/whisper-${modelId}`;
     }
-    const modelDownloader = new ModelDownloader(MODEL_CACHE_DIR);
+    const modelDownloader = new ModelDownloader(getModelCacheDir());
 
     // If model is already downloaded, skip and send 100% progress
     if (modelDownloader.isModelReady(modelId)) {
@@ -600,7 +618,7 @@ function setupIPC(): void {
       }
       // Initialize WhisperService with the cache dir
       await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
       return;
@@ -610,7 +628,7 @@ function setupIPC(): void {
     try {
       await modelDownloader.download({
         modelId,
-        destDir: MODEL_CACHE_DIR,
+        destDir: getModelCacheDir(),
         onProgress: (progress) => {
           if (onboardingWindow && !onboardingWindow.isDestroyed()) {
             onboardingWindow.webContents.send(IpcChannel.DOWNLOAD_PROGRESS, progress);
@@ -636,7 +654,7 @@ function setupIPC(): void {
 
       // On completion, initialize WhisperService with the cache dir
       await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
     } catch (err) {
