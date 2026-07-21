@@ -760,12 +760,29 @@ if (!gotTheLock) {
 
     // Show onboarding on first launch
     const onboardingDone = settingsStore.get('onboardingComplete');
+    console.log(
+      `[Startup] onboardingComplete=${onboardingDone} -> opening ${
+        onboardingDone ? 'dashboard' : 'onboarding'
+      }`,
+    );
+    console.log(
+      `[Startup] models will go to ${describeModelCacheDir(
+        settingsStore.get('modelCacheDir'),
+        app.getPath('userData'),
+      )}`,
+    );
+
     if (!onboardingDone) {
       onboardingWindow = createOnboardingWindow();
       onboardingWindow.show();
+      onboardingWindow.focus();
+      console.log('[Startup] onboarding window opened');
     } else {
       // Create dashboard window when onboarding is already complete
       dashboardWindow = createDashboardWindow();
+      dashboardWindow.once('ready-to-show', () =>
+        console.log('[Startup] dashboard window shown'),
+      );
     }
   });
 }
