@@ -325,8 +325,36 @@ export class ActionExecutor {
    */
   private async executeBrowserTask(intent: ClassifiedIntent): Promise<ExecutionResult> {
     const startTime = Date.now();
-
     try {
+      const result = await this.runBrowserTask(intent.target);
+      return {
+        success: result.status === 'completed',
+        action: intent.action,
+        target: intent.target,
+        error: result.error,
+        durationMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        action: intent.action,
+        target: intent.target,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Runs a browser task and returns the full result, including anything the
+   * agent read off the page.
+   *
+   * The tool layer needs `result`/`structuredData` — a bare success flag tells
+   * the model nothing about what the browser actually found, which is useless
+   * for anything that reads a page rather than just clicking through it.
+   */
+  async runBrowserTask(command: string): Promise<BrowserTaskResult> {
+    {
       // Create BrowserAgent on-demand if not already set up
       if (!this.browserAgent) {
         if (!this.browserNotifier) {
@@ -355,30 +383,15 @@ export class ActionExecutor {
       const signal = this.currentAbortController.signal;
 
       // Execute the browser task
-      const result: BrowserTaskResult = await this.browserAgent.executeTask(
-        { command: intent.target, taskId },
-        signal
-      );
-
-      this.currentAbortController = null;
-
-      return {
-        success: result.status === 'completed',
-        action: intent.action,
-        target: intent.target,
-        error: result.error,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      this.currentAbortController = null;
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        action: intent.action,
-        target: intent.target,
-        error: errorMessage,
-        durationMs: Date.now() - startTime,
-      };
+      try {
+        const result: BrowserTaskResult = await this.browserAgent.executeTask(
+          { command, taskId },
+          signal
+        );
+        return result;
+      } finally {
+        this.currentAbortController = null;
+      }
     }
   }
 }

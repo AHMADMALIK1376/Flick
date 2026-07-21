@@ -60,7 +60,11 @@ describe('AgentService', () => {
     expect(service.getToolNames()).toContain('open_path');
   });
 
-  it('exposes exactly the six desktop tools', () => {
-    expect(service.getToolNames()).toHaveLength(6);
+  it('registers the browser agent as a tool', () => {
+    expect(service.getToolNames()).toContain('browser_task');
+  });
+
+  it('exposes the six desktop tools plus the browser tool', () => {
+    expect(service.getToolNames()).toHaveLength(7);
   });
 });
