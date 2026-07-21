@@ -15,7 +15,7 @@ import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
-import { WhisperService } from './whisper-service';
+import { WhisperService, resolveModelId } from './whisper-service';
 import { ModelDownloader } from './model-downloader';
 import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
@@ -458,7 +458,10 @@ function setupIPC(): void {
 
       // Initialize whisper service if needed
       if (!whisperService.isInitialized()) {
-        await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+        await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
       }
 
       // Write WAV buffer to temp file
@@ -574,7 +577,10 @@ function setupIPC(): void {
         });
       }
       // Initialize WhisperService with the cache dir
-      await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+      await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
       return;
     }
 
@@ -607,7 +613,10 @@ function setupIPC(): void {
       });
 
       // On completion, initialize WhisperService with the cache dir
-      await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+      await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
     } catch (err) {
       console.error('[Model] Download/load failed:', err);
       throw err;

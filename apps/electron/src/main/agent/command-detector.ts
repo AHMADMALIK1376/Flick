@@ -6,6 +6,16 @@ import { matchesUrduVerb } from './lang/urdu-verbs';
 /** Number of trailing tokens checked for an Urdu verb. */
 const VERB_FINAL_WINDOW = 2;
 
+/**
+ * How many leading tokens may precede an English command verb.
+ *
+ * Real speech rarely starts on the verb — "in chrome open youtube", "can you
+ * open chrome". Anchoring strictly at position 0 silently dropped those to
+ * dictation. The window is kept small so ordinary prose that merely contains a
+ * verb ("we should probably open that later") stays dictation.
+ */
+const ENGLISH_VERB_WINDOW = 3;
+
 /** Base confidence for a pattern match, matching prior behaviour. */
 const BASE_CONFIDENCE = 0.8;
 
@@ -63,7 +73,7 @@ export class CommandDetector {
     const tokens = normalized.split(' ');
 
     const matchedPattern =
-      this.matchEnglish(normalized) ?? this.matchVerbFinal(tokens);
+      this.matchEnglish(tokens) ?? this.matchVerbFinal(tokens);
 
     if (!matchedPattern) {
       return { isCommand: false, confidence: 0, language };
@@ -82,9 +92,15 @@ export class CommandDetector {
     };
   }
 
-  /** English: verb at the start. */
-  private matchEnglish(normalized: string): string | undefined {
-    return this.englishPatterns.find(({ regex }) => regex.test(normalized))?.label;
+  /** English: verb at or near the start. */
+  private matchEnglish(tokens: string[]): string | undefined {
+    const limit = Math.min(ENGLISH_VERB_WINDOW, tokens.length);
+    for (let i = 0; i < limit; i++) {
+      const candidate = tokens.slice(i).join(' ');
+      const hit = this.englishPatterns.find(({ regex }) => regex.test(candidate));
+      if (hit) return hit.label;
+    }
+    return undefined;
   }
 
   /** Urdu (both scripts): verb at the end. */

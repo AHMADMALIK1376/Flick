@@ -17,6 +17,20 @@ describe('CommandDetector — English (verb-initial)', () => {
   it('treats plain prose as dictation', () => {
     expect(detector.detect('the meeting went well today').isCommand).toBe(false);
   });
+
+  it('detects a verb after a leading prepositional phrase', () => {
+    expect(detector.detect('in chrome open youtube').isCommand).toBe(true);
+  });
+
+  it('detects a verb after a leading politeness phrase', () => {
+    expect(detector.detect('can you open chrome').isCommand).toBe(true);
+  });
+
+  it('does not scan arbitrarily deep for a verb', () => {
+    expect(
+      detector.detect('i was thinking we should probably open that later').isCommand
+    ).toBe(false);
+  });
 });
 
 describe('CommandDetector — Roman Urdu (verb-final)', () => {
