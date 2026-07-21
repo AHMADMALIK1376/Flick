@@ -62,7 +62,7 @@ const settingsStore = new Store<Settings>({
   defaults: {
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
-    modelName: 'base.en',
+    modelName: 'base',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
@@ -550,7 +550,7 @@ function setupIPC(): void {
   // Download model handler
   ipcMain.handle(IpcChannel.DOWNLOAD_MODEL, async (_event, modelName: string) => {
     // Map short model names to full Hugging Face model IDs
-    let modelId = modelName || 'Xenova/whisper-small.en';
+    let modelId = modelName || 'Xenova/whisper-small';
     if (!modelId.includes('/')) {
       modelId = `Xenova/whisper-${modelId}`;
     }

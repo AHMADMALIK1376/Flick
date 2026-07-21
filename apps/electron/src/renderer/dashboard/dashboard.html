@@ -1405,10 +1405,10 @@
           <div class="form-group">
             <label for="model">Whisper Model</label>
             <select id="model">
-              <option value="tiny.en">tiny.en — Fastest (~75 MB)</option>
-              <option value="base.en">base.en — Fast (~142 MB)</option>
-              <option value="small.en">small.en — Balanced (~466 MB)</option>
-              <option value="medium.en">medium.en — Accurate (~1.5 GB)</option>
+              <option value="tiny">tiny — Fastest (~75 MB)</option>
+              <option value="base">base — Fast (~142 MB)</option>
+              <option value="small">small — Balanced (~466 MB)</option>
+              <option value="medium">medium — Best for Urdu (~1.5 GB)</option>
             </select>
           </div>
           <div class="form-group">
@@ -2035,7 +2035,7 @@
         var settings = await window.electronAPI.getSettings();
         currentSettings = settings;
         document.getElementById('hotkey').value = settings.hotkeyAccelerator || '';
-        document.getElementById('model').value = settings.modelName || 'base.en';
+        document.getElementById('model').value = settings.modelName || 'base';
         document.getElementById('language').value = settings.language || 'en';
         document.getElementById('autoCopy').checked = settings.autoCopyToClipboard !== false;
         document.getElementById('showWidget').checked = settings.showFloatingWidget !== false;

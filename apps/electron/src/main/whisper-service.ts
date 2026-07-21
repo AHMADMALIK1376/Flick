@@ -7,7 +7,7 @@ let transcriber: any = null;
 let loading = false;
 
 /** Default model ID used by the application */
-const DEFAULT_MODEL_ID = 'Xenova/whisper-medium.en';
+const DEFAULT_MODEL_ID = 'Xenova/whisper-medium';
 
 /** Required files for a Whisper ONNX model variant */
 const WHISPER_REQUIRED_FILES = [
@@ -53,7 +53,7 @@ export class WhisperService {
     loading = true;
 
     try {
-      console.log('[Whisper] Loading model Xenova/whisper-small.en...');
+      console.log(`[Whisper] Loading model ${DEFAULT_MODEL_ID}...`);
       const dynamicImport = new Function('specifier', 'return import(specifier)');
       const transformers = await dynamicImport('@xenova/transformers');
 
@@ -98,7 +98,15 @@ export class WhisperService {
     }
   }
 
-  async transcribe(wavFilePath: string): Promise<TranscriptionResult> {
+  /**
+   * @param language 'auto' lets Whisper detect the language, which is the
+   * correct default for code-switched speech — forcing 'ur' pushes output into
+   * Urdu script, and forcing 'en' mangles Urdu words.
+   */
+  async transcribe(
+    wavFilePath: string,
+    language: 'en' | 'ur' | 'auto' = 'auto'
+  ): Promise<TranscriptionResult> {
     if (!this.initialized || !transcriber) {
       throw new Error('WhisperService not initialized');
     }
@@ -116,6 +124,7 @@ export class WhisperService {
         stride_length_s: 5,
         return_timestamps: false,
         sampling_rate: 16000,
+        ...(language !== 'auto' ? { language, task: 'transcribe' } : {}),
       });
       const text = (result?.text || '').trim();
       const durationMs = Date.now() - startTime;

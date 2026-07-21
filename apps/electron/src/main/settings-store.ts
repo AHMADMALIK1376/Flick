@@ -4,7 +4,7 @@ import type { Settings } from '../shared/types';
 const defaults: Settings = {
   hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
   hotkeyMode: 'toggle',
-  modelName: 'base.en',
+  modelName: 'base',
   language: 'en',
   autoCopyToClipboard: true,
   showFloatingWidget: true,
