@@ -98,6 +98,16 @@ export class AgentService {
     return this.toolRegistry.list().map((t) => t.name);
   }
 
+  /** Per-call token usage and estimated cost, most recent first. */
+  getRecentUsage(limit = 20) {
+    return this.llmService.getRecentUsage(limit);
+  }
+
+  /** Session totals across every model call. */
+  getUsageTotals() {
+    return this.llmService.getUsageTotals();
+  }
+
   /**
    * Full pipeline (voice path): detect command → run tool loop → log result.
    *
@@ -128,10 +138,16 @@ export class AgentService {
     const outcome = await this.toolLoop.run(text, detection.language);
     const durationMs = Date.now() - startTime;
 
+    const totals = this.llmService.getUsageTotals();
     console.log(
       `[Agent] loop finished in ${durationMs}ms: ${outcome.steps.length} step(s)` +
         `${outcome.stoppedReason ? ` stopped=${outcome.stoppedReason}` : ''}` +
         ` final="${outcome.finalMessage ?? ''}"`
+    );
+    console.log(
+      `[Agent] session usage: ${totals.calls} call(s), ` +
+        `${totals.inputTokens} in (${totals.imageTokens} image) + ` +
+        `${totals.outputTokens} out = $${totals.costUsd.toFixed(4)}`
     );
     for (const step of outcome.steps) {
       console.log(
