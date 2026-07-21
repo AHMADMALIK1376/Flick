@@ -16,7 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
-import { resolveModelCacheDir } from './model-paths';
+import { resolveModelCacheDir, describeModelCacheDir } from './model-paths';
 import { ModelDownloader } from './model-downloader';
 import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
@@ -36,15 +36,24 @@ import type { ProviderId } from './agent/llm/providers/llm-provider';
  * that does not exist yet.
  */
 function getModelCacheDir(): string {
-  const dir = resolveModelCacheDir(
-    settingsStore.get('modelCacheDir'),
-    app.getPath('userData'),
-  );
+  const configured = settingsStore.get('modelCacheDir');
+  const dir = resolveModelCacheDir(configured, app.getPath('userData'));
+
+  if (dir !== lastLoggedModelDir) {
+    lastLoggedModelDir = dir;
+    console.log(
+      `[Models] storing in ${describeModelCacheDir(configured, app.getPath('userData'))}`,
+    );
+  }
+
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
 }
+
+/** Last path announced, so the location is logged on change rather than per call. */
+let lastLoggedModelDir: string | null = null;
 
 // ── Stores & Services ───────────────────────────────────────────────────────
 

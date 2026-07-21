@@ -28,6 +28,28 @@ export function resolveModelCacheDir(
   return trimmed;
 }
 
+/**
+ * Human-readable explanation of where models will be stored and why.
+ *
+ * Logged on startup because a misconfigured location is otherwise invisible
+ * until a 1.5GB download has already landed on the wrong drive.
+ */
+export function describeModelCacheDir(
+  configured: string | null | undefined,
+  userDataDir: string
+): string {
+  const resolved = resolveModelCacheDir(configured, userDataDir);
+  const trimmed = (configured ?? '').trim();
+
+  if (!trimmed) {
+    return `${resolved} (default — no modelCacheDir configured)`;
+  }
+  if (!path.isAbsolute(trimmed)) {
+    return `${resolved} (default — ignoring relative modelCacheDir "${trimmed}")`;
+  }
+  return `${resolved} (from modelCacheDir setting)`;
+}
+
 /** True when a custom location is in effect rather than the default. */
 export function isCustomModelDir(
   configured: string | null | undefined,
