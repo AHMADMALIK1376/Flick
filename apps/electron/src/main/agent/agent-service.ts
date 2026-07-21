@@ -1,9 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import { CommandDetector } from './command-detector';
-import { IntentClassifier } from './intent-classifier';
 import { ActionExecutor } from './action-executor';
 import { AgentStore } from './agent-store';
 import { LLMService } from './llm/llm-service';
+import { ToolRegistry } from './tools/tool-registry';
+import { PermissionGate } from './tools/permission-gate';
+import { registerDesktopTools } from './tools/desktop-tools';
+import { ToolLoop } from './tool-loop';
+import { createLlmTurnFn } from './llm-turn-adapter';
 import { ProviderId } from './llm/providers/llm-provider';
 import {
   AgentResult,
@@ -19,24 +23,26 @@ export interface AgentNotifier {
   notifyUnrecognized(text: string): void;
 }
 
-/** Confidence threshold below which a classified command is treated as unrecognized. */
-const CONFIDENCE_THRESHOLD = 0.7;
-
 /**
  * Orchestrates the full agent pipeline:
- * CommandDetector → IntentClassifier → ActionExecutor → AgentStore
+ * CommandDetector → ToolLoop → ToolRegistry → ActionExecutor → AgentStore
  *
- * Owns the shared {@link LLMService} instance and wires it into the
- * IntentClassifier and ActionExecutor so all model access flows through one
- * provider-agnostic layer with instant model/key switching.
+ * CommandDetector is a gate, not a classifier: it decides only whether a
+ * transcript is worth an LLM call at all, so plain dictation still reaches the
+ * clipboard for free. Everything past that gate runs through the tool loop, so
+ * one utterance can drive several actions.
+ *
+ * Owns the shared {@link LLMService} instance so all model access flows through
+ * one provider-agnostic layer with instant model/key switching.
  */
 export class AgentService {
   private commandDetector: CommandDetector;
-  private intentClassifier: IntentClassifier;
   private actionExecutor: ActionExecutor;
   private agentStore: AgentStore;
   private notifier: AgentNotifier;
   private llmService: LLMService;
+  private toolRegistry: ToolRegistry;
+  private toolLoop: ToolLoop;
 
   private enabled: boolean = false;
 
@@ -44,10 +50,28 @@ export class AgentService {
     this.notifier = notifier;
     this.llmService = new LLMService();
     this.commandDetector = new CommandDetector();
-    this.intentClassifier = new IntentClassifier(this.llmService);
     this.actionExecutor = new ActionExecutor();
     this.actionExecutor.setLLMService(this.llmService);
     this.agentStore = new AgentStore();
+
+    this.toolRegistry = new ToolRegistry();
+    registerDesktopTools(this.toolRegistry, this.actionExecutor);
+
+    // TEMPORARY: auto-approve until the confirm dialog lands. Every desktop
+    // tool is side-effecting, so a gate that cannot prompt would block
+    // every action.
+    const gate = new PermissionGate(async () => true);
+
+    this.toolLoop = new ToolLoop(
+      this.toolRegistry,
+      gate,
+      createLlmTurnFn(this.llmService, this.toolRegistry)
+    );
+  }
+
+  /** Names of every registered tool. Used by tests and the dashboard. */
+  getToolNames(): string[] {
+    return this.toolRegistry.list().map((t) => t.name);
   }
 
   /**
@@ -70,65 +94,48 @@ export class AgentService {
       return { handled: false };
     }
 
-    // Classify intent via the active LLM provider. The LLMService handles
-    // missing/invalid keys internally and returns them as errors.
-    const classification = await this.intentClassifier.classify(text);
+    // Run the multi-step tool loop. The model may call several tools in
+    // sequence, so one utterance can drive several actions.
+    const startTime = Date.now();
+    const outcome = await this.toolLoop.run(text, detection.language);
+    const durationMs = Date.now() - startTime;
 
-    if (!classification.success) {
-      const error = classification.error;
-
-      // Invalid/missing key → disable agent mode and surface the issue
-      if (error.type === 'invalid_key') {
-        this.enabled = false;
-        this.notifier.notifyError('API key issue. Agent mode disabled.');
-        return { handled: false };
+    // One log entry per tool call, so the Agent panel shows each step.
+    let lastEntry: ActionLogEntry | undefined;
+    for (const step of outcome.steps) {
+      const entry: ActionLogEntry = {
+        id: uuidv4(),
+        timestamp: Date.now(),
+        commandText: text,
+        // Desktop tool names currently coincide with ActionType. This cast
+        // must be revisited when tools outside that union are registered.
+        intentType: step.call.name as ActionLogEntry['intentType'],
+        target: JSON.stringify(step.call.args),
+        status: step.result.ok ? 'success' : 'error',
+        durationMs,
+      };
+      if (!step.result.ok) {
+        entry.errorMessage = step.result.error;
       }
-
-      // Any other error → notify and fall back to dictation
-      this.notifier.notifyError(error.message);
-      return { handled: false };
+      this.agentStore.addEntry(entry);
+      lastEntry = entry;
     }
 
-    const intent = classification.intent;
-
-    // Confidence threshold check
-    if (intent.confidence < CONFIDENCE_THRESHOLD) {
+    // Model neither acted nor spoke — treat as unrecognized and let the text
+    // fall through to dictation so speech is never lost.
+    if (outcome.steps.length === 0 && !outcome.finalMessage) {
       this.notifier.notifyUnrecognized(text);
       return { handled: false };
     }
 
-    // Execute the action
-    const startTime = Date.now();
-    const executionResult = await this.actionExecutor.execute(intent);
-    const durationMs = Date.now() - startTime;
-
-    // Create log entry
-    const logEntry: ActionLogEntry = {
-      id: uuidv4(),
-      timestamp: Date.now(),
-      commandText: text,
-      intentType: intent.action,
-      target: intent.target,
-      status: executionResult.success ? 'success' : 'error',
-      durationMs,
-    };
-
-    if (!executionResult.success && executionResult.error) {
-      logEntry.errorMessage = executionResult.error;
+    const firstFailure = outcome.steps.find((s) => !s.result.ok);
+    if (firstFailure && !firstFailure.result.ok) {
+      this.notifier.notifyError(firstFailure.result.error);
+    } else if (outcome.finalMessage) {
+      this.notifier.notifySuccess(outcome.finalMessage);
     }
 
-    // Store in action log
-    this.agentStore.addEntry(logEntry);
-
-    // Send notification
-    if (executionResult.success) {
-      const message = this.buildSuccessMessage(intent.action, intent.target);
-      this.notifier.notifySuccess(message);
-    } else {
-      this.notifier.notifyError(executionResult.error || 'Action failed');
-    }
-
-    return { handled: true, action: logEntry };
+    return { handled: true, action: lastEntry };
   }
 
   /**
@@ -154,56 +161,52 @@ export class AgentService {
       };
     }
 
-    // Classify intent via the active LLM provider
-    const classification = await this.intentClassifier.classify(text);
-    if (!classification.success) {
-      return {
-        status: 'error',
-        message: classification.error.message,
+    // Same multi-step tool loop as the voice path, so typed and spoken
+    // commands behave identically.
+    const startTime = Date.now();
+    const outcome = await this.toolLoop.run(text, detection.language);
+    const durationMs = Date.now() - startTime;
+
+    let lastCall: string | undefined;
+    for (const step of outcome.steps) {
+      const entry: ActionLogEntry = {
+        id: uuidv4(),
+        timestamp: Date.now(),
+        commandText: text,
+        // Desktop tool names currently coincide with ActionType. This cast
+        // must be revisited when tools outside that union are registered.
+        intentType: step.call.name as ActionLogEntry['intentType'],
+        target: JSON.stringify(step.call.args),
+        status: step.result.ok ? 'success' : 'error',
+        durationMs,
       };
+      if (!step.result.ok) {
+        entry.errorMessage = step.result.error;
+      }
+      this.agentStore.addEntry(entry);
+      lastCall = step.call.name;
     }
 
-    const intent = classification.intent;
-
-    // Confidence threshold check
-    if (intent.confidence < CONFIDENCE_THRESHOLD) {
+    if (outcome.steps.length === 0 && !outcome.finalMessage) {
       return {
         status: 'low_confidence',
         message: 'I am not confident I understood that command.',
       };
     }
 
-    // Execute the action
-    const startTime = Date.now();
-    const executionResult = await this.actionExecutor.execute(intent);
-    const durationMs = Date.now() - startTime;
-
-    // Record an action log entry identical in shape to voice commands
-    const logEntry: ActionLogEntry = {
-      id: uuidv4(),
-      timestamp: Date.now(),
-      commandText: text,
-      intentType: intent.action,
-      target: intent.target,
-      status: executionResult.success ? 'success' : 'error',
-      durationMs,
-    };
-
-    if (!executionResult.success && executionResult.error) {
-      logEntry.errorMessage = executionResult.error;
+    const firstFailure = outcome.steps.find((s) => !s.result.ok);
+    if (firstFailure && !firstFailure.result.ok) {
+      return {
+        status: 'error' as ChatResponseStatus,
+        message: firstFailure.result.error,
+        ...(lastCall ? { actionType: lastCall as ActionLogEntry['intentType'] } : {}),
+      };
     }
 
-    this.agentStore.addEntry(logEntry);
-
-    const status: ChatResponseStatus = executionResult.success ? 'success' : 'error';
-    const message = executionResult.success
-      ? this.buildSuccessMessage(intent.action, intent.target)
-      : executionResult.error || 'Action failed';
-
     return {
-      status,
-      message,
-      actionType: intent.action,
+      status: 'success' as ChatResponseStatus,
+      message: outcome.finalMessage ?? 'Done.',
+      ...(lastCall ? { actionType: lastCall as ActionLogEntry['intentType'] } : {}),
     };
   }
 
