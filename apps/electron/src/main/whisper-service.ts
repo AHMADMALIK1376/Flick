@@ -21,6 +21,21 @@ export function resolveModelId(name?: string | null): string {
   return name.includes('/') ? name : `Xenova/whisper-${name}`;
 }
 
+export type TranscribeLanguage = 'en' | 'ur' | 'auto';
+
+/**
+ * Coerces the persisted language setting into a value Whisper accepts.
+ *
+ * Defaults to English rather than auto-detect. Auto-detect drifts badly on
+ * South Asian accents — it transcribes English speech into Hindi or Telugu,
+ * which downstream detection cannot recover from. Forcing English also happens
+ * to be right for code-switched Roman Urdu ("chrome open karo"), since it keeps
+ * the output in Latin script where the Roman Urdu matcher can read it.
+ */
+export function resolveLanguage(value?: string | null): TranscribeLanguage {
+  return value === 'ur' || value === 'auto' ? value : 'en';
+}
+
 /**
  * Every model the app can load, largest first.
  *
@@ -161,13 +176,13 @@ export class WhisperService {
   }
 
   /**
-   * @param language 'auto' lets Whisper detect the language, which is the
-   * correct default for code-switched speech — forcing 'ur' pushes output into
-   * Urdu script, and forcing 'en' mangles Urdu words.
+   * @param language 'auto' lets Whisper detect the language, but see
+   * {@link resolveLanguage} — auto-detect is unreliable on South Asian accents
+   * and is not the default.
    */
   async transcribe(
     wavFilePath: string,
-    language: 'en' | 'ur' | 'auto' = 'auto'
+    language: TranscribeLanguage = 'en'
   ): Promise<TranscriptionResult> {
     if (!this.initialized || !transcriber) {
       throw new Error('WhisperService not initialized');

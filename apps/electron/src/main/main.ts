@@ -15,7 +15,7 @@ import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
-import { WhisperService, resolveModelId } from './whisper-service';
+import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
 import { ModelDownloader } from './model-downloader';
 import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
@@ -469,7 +469,10 @@ function setupIPC(): void {
       fs.writeFileSync(tmpFile, Buffer.from(wavBuffer));
 
       try {
-        const result = await whisperService.transcribe(tmpFile);
+        const result = await whisperService.transcribe(
+          tmpFile,
+          resolveLanguage(settingsStore.get('language'))
+        );
 
         // AI Agent processing
         if (agentService.isEnabled() && result.text) {

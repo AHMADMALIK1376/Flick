@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveModelId, WhisperService } from './whisper-service';
+import { resolveModelId, resolveLanguage, WhisperService } from './whisper-service';
 
 const REQUIRED_FILES = [
   'onnx/encoder_model_quantized.onnx',
@@ -44,6 +44,33 @@ describe('resolveModelId', () => {
   it('never produces an English-only checkpoint from a bare name', () => {
     // .en checkpoints cannot transcribe Urdu at all.
     expect(resolveModelId('medium')).not.toMatch(/\.en$/);
+  });
+});
+
+describe('resolveLanguage', () => {
+  it('keeps an explicit Urdu selection', () => {
+    expect(resolveLanguage('ur')).toBe('ur');
+  });
+
+  it('keeps an explicit auto selection', () => {
+    expect(resolveLanguage('auto')).toBe('auto');
+  });
+
+  it('defaults to English when unset', () => {
+    expect(resolveLanguage(undefined)).toBe('en');
+  });
+
+  /**
+   * The settings store previously offered es/fr/de/ja/ko/zh, none of which
+   * Flick supports. Stale persisted values must not reach Whisper.
+   */
+  it('coerces an unsupported legacy language to English', () => {
+    expect(resolveLanguage('ja')).toBe('en');
+    expect(resolveLanguage('zh')).toBe('en');
+  });
+
+  it('never defaults to auto-detect, which drifts to Hindi on Urdu accents', () => {
+    expect(resolveLanguage(null)).not.toBe('auto');
   });
 });
 

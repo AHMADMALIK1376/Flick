@@ -75,8 +75,7 @@ export class AgentService {
   }
 
   /**
-   * Full pipeline (voice path): detect command → classify intent → execute
-   * action → log result.
+   * Full pipeline (voice path): detect command → run tool loop → log result.
    *
    * Returns { handled: true } if the text was processed as a command, or
    * { handled: false } if it should flow through normal dictation. Any LLM
@@ -85,11 +84,16 @@ export class AgentService {
   async process(text: string): Promise<AgentResult> {
     // If agent mode is disabled, pass through immediately
     if (!this.enabled) {
+      console.log('[Agent] mode is OFF — passing through as dictation.');
       return { handled: false };
     }
 
     // Run command detection (local, no network)
     const detection = this.commandDetector.detect(text);
+    console.log(
+      `[Agent] detect "${text}" -> isCommand=${detection.isCommand} ` +
+        `language=${detection.language} matched=${detection.matchedPattern ?? '-'}`
+    );
     if (!detection.isCommand) {
       return { handled: false };
     }
@@ -99,6 +103,18 @@ export class AgentService {
     const startTime = Date.now();
     const outcome = await this.toolLoop.run(text, detection.language);
     const durationMs = Date.now() - startTime;
+
+    console.log(
+      `[Agent] loop finished in ${durationMs}ms: ${outcome.steps.length} step(s)` +
+        `${outcome.stoppedReason ? ` stopped=${outcome.stoppedReason}` : ''}` +
+        ` final="${outcome.finalMessage ?? ''}"`
+    );
+    for (const step of outcome.steps) {
+      console.log(
+        `[Agent]   ${step.call.name}(${JSON.stringify(step.call.args)}) -> ` +
+          (step.result.ok ? 'ok' : `ERROR: ${step.result.error}`)
+      );
+    }
 
     // One log entry per tool call, so the Agent panel shows each step.
     let lastEntry: ActionLogEntry | undefined;
