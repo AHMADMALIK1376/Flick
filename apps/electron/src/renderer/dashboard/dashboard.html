@@ -2124,7 +2124,28 @@
       if (e.shiftKey) parts.push('Shift');
       var key = e.key;
       if (!['Control', 'Meta', 'Alt', 'Shift'].includes(key)) {
-        parts.push(key.length === 1 ? key.toUpperCase() : key);
+        // Electron accelerators use their own key names. e.key gives " " for the
+        // spacebar and "ArrowUp" for arrows, neither of which Electron accepts.
+        var ELECTRON_KEYS = {
+          ' ': 'Space',
+          'ArrowUp': 'Up',
+          'ArrowDown': 'Down',
+          'ArrowLeft': 'Left',
+          'ArrowRight': 'Right',
+          'Escape': 'Esc',
+          'Enter': 'Return',
+        };
+        var name = ELECTRON_KEYS[key] || (key.length === 1 ? key.toUpperCase() : key);
+
+        // A global shortcut with no modifier would swallow that key system-wide.
+        if (parts.length === 0) {
+          hotkeyInput.value = '';
+          hotkeyInput.placeholder = 'Add Ctrl, Alt or Shift — e.g. Ctrl+Shift+Space';
+          hotkeyInput.classList.add('error');
+          return;
+        }
+
+        parts.push(name);
         hotkeyInput.value = parts.join('+');
         hotkeyInput.classList.remove('error');
       }
