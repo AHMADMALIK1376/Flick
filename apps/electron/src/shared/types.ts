@@ -1,3 +1,12 @@
+/**
+ * Language of a spoken utterance.
+ *
+ * 'roman-ur' is Urdu written in Latin script ("chrome open karo") — how
+ * Pakistani students most often speak to a computer. 'mixed' is Urdu script
+ * combined with Latin words in one utterance.
+ */
+export type LanguageHint = 'en' | 'ur' | 'roman-ur' | 'mixed';
+
 export interface Settings {
   hotkeyAccelerator: string;
   hotkeyMode: 'toggle' | 'push-to-talk';
