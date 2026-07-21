@@ -42,7 +42,12 @@ RESPONSE FORMAT — reply with JSON only, no prose and no markdown fences:
 - To act, put one or more calls in "tool_calls".
 - When the task is finished, return an empty "tool_calls" array and a "final_message".
 - Break multi-step requests into several tool calls, one step at a time.
-- Never invent a tool that is not listed above.`;
+- Never invent a tool that is not listed above.
+- Use the single most direct tool for each step. Never call two tools that
+  achieve the same goal — for a site search, either open_url with a search URL
+  or web_search, never both.
+- The user is speaking, so a request may be transcribed loosely. Act on the
+  clear intent rather than asking for clarification when the meaning is obvious.`;
 }
 
 /** Removes ```json fences some models add despite being told not to. */

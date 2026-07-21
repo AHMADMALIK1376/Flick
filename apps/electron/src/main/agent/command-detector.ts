@@ -2,6 +2,7 @@ import { DetectionResult } from '../../shared/types';
 import { normalize } from './lang/normalize';
 import { detectLanguage } from './lang/detect-language';
 import { matchesUrduVerb } from './lang/urdu-verbs';
+import { stripWakeWord } from './lang/wake-word';
 
 /** Number of trailing tokens checked for an Urdu verb. */
 const VERB_FINAL_WINDOW = 2;
@@ -70,7 +71,9 @@ export class CommandDetector {
       return { isCommand: false, confidence: 0, language };
     }
 
-    const tokens = normalized.split(' ');
+    // Drop any address to the assistant first, so naming her does not push the
+    // verb past the lookahead window.
+    const tokens = stripWakeWord(normalized.split(' '));
 
     const matchedPattern =
       this.matchEnglish(tokens) ?? this.matchVerbFinal(tokens);
