@@ -17,6 +17,7 @@ const defaults: Settings = {
   geminiApiKey: '',
   deepseekApiKey: '',
   anthropicApiKey: '',
+  qwenApiKey: '',
   llmProvider: '',
   llmModel: '',
   browserAgentHeadless: false,
@@ -31,6 +32,7 @@ const OBFUSCATED_KEYS: ReadonlyArray<keyof Settings> = [
   'geminiApiKey',
   'deepseekApiKey',
   'anthropicApiKey',
+  'qwenApiKey',
 ];
 
 /** Marker prefix identifying an already base64-obfuscated value. */

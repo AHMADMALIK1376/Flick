@@ -46,6 +46,15 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
       { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5', vision: true },
     ],
   },
+  {
+    id: 'qwen',
+    displayName: 'Alibaba Cloud (Qwen)',
+    models: [
+      { id: 'qwen-plus', displayName: 'Qwen Plus', vision: false },
+      { id: 'qwen-max', displayName: 'Qwen Max', vision: false },
+      { id: 'qwen-vl-max', displayName: 'Qwen VL Max', vision: true },
+    ],
+  },
 ];
 
 /** Returns the provider metadata for the given provider id, or undefined. */

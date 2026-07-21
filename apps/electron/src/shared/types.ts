@@ -23,6 +23,7 @@ export interface Settings {
   geminiApiKey: string;
   deepseekApiKey: string;
   anthropicApiKey: string;
+  qwenApiKey: string;
   llmProvider: string;
   llmModel: string;
   browserAgentHeadless: boolean;
