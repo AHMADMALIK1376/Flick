@@ -1,11 +1,32 @@
 import { DetectionResult } from '../../shared/types';
+import { normalize } from './lang/normalize';
+import { detectLanguage } from './lang/detect-language';
+import { matchesUrduVerb } from './lang/urdu-verbs';
+
+/** Number of trailing tokens checked for an Urdu verb. */
+const VERB_FINAL_WINDOW = 2;
+
+/** Base confidence for a pattern match, matching prior behaviour. */
+const BASE_CONFIDENCE = 0.8;
+
+/** Bonus for terse utterances, matching prior behaviour. */
+const SHORT_UTTERANCE_BONUS = 0.1;
+const SHORT_UTTERANCE_MAX_WORDS = 6;
 
 /**
- * Local regex/keyword-based command detection.
- * No API call needed — runs entirely in-process with sub-millisecond latency.
+ * Local command detection. No API call — runs in-process in well under a
+ * millisecond.
+ *
+ * This is a GATE, not a classifier. It decides only whether a transcript is
+ * worth an LLM call at all, so that plain dictation still reaches the clipboard
+ * for free. Intent is determined later by the agent tool loop.
+ *
+ * Two matching strategies, because word order differs by language:
+ *   - English is verb-initial  → anchored patterns at the start
+ *   - Urdu is verb-final       → stem matching on the last tokens
  */
 export class CommandDetector {
-  private readonly patterns: { regex: RegExp; label: string }[] = [
+  private readonly englishPatterns: { regex: RegExp; label: string }[] = [
     { regex: /^take\s+a\s+screenshot/i, label: 'take a screenshot' },
     { regex: /^take\s+screenshot/i, label: 'take screenshot' },
     { regex: /^go\s+to/i, label: 'go to' },
@@ -32,32 +53,43 @@ export class CommandDetector {
   ];
 
   detect(text: string): DetectionResult {
-    const trimmed = text.trim();
+    const normalized = normalize(text);
+    const language = detectLanguage(text);
 
-    if (!trimmed) {
-      return { isCommand: false, confidence: 0 };
+    if (!normalized) {
+      return { isCommand: false, confidence: 0, language };
     }
 
-    // Check for pattern match at the start of text
-    for (const { regex, label } of this.patterns) {
-      if (regex.test(trimmed)) {
-        let confidence = 0.8; // Base confidence for pattern match
+    const tokens = normalized.split(' ');
 
-        // Short utterance bonus: < 6 words with action verb gets +0.1
-        const wordCount = trimmed.split(/\s+/).length;
-        if (wordCount < 6) {
-          confidence += 0.1;
-        }
+    const matchedPattern =
+      this.matchEnglish(normalized) ?? this.matchVerbFinal(tokens);
 
-        return {
-          isCommand: true,
-          confidence: Math.min(confidence, 1.0),
-          matchedPattern: label,
-        };
-      }
+    if (!matchedPattern) {
+      return { isCommand: false, confidence: 0, language };
     }
 
-    // No pattern match — classify as dictation
-    return { isCommand: false, confidence: 0 };
+    let confidence = BASE_CONFIDENCE;
+    if (tokens.length < SHORT_UTTERANCE_MAX_WORDS) {
+      confidence += SHORT_UTTERANCE_BONUS;
+    }
+
+    return {
+      isCommand: true,
+      confidence: Math.min(confidence, 1.0),
+      matchedPattern,
+      language,
+    };
+  }
+
+  /** English: verb at the start. */
+  private matchEnglish(normalized: string): string | undefined {
+    return this.englishPatterns.find(({ regex }) => regex.test(normalized))?.label;
+  }
+
+  /** Urdu (both scripts): verb at the end. */
+  private matchVerbFinal(tokens: string[]): string | undefined {
+    const tail = tokens.slice(-VERB_FINAL_WINDOW);
+    return tail.find((token) => matchesUrduVerb(token));
   }
 }

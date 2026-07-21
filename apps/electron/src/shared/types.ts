@@ -153,6 +153,7 @@ export interface DetectionResult {
   isCommand: boolean;
   confidence: number;
   matchedPattern?: string;
+  language: LanguageHint;
 }
 
 export interface ClassificationError {
