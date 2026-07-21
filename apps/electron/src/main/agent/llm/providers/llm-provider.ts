@@ -1,4 +1,4 @@
-export type ProviderId = 'openai' | 'gemini' | 'deepseek' | 'anthropic';
+export type ProviderId = 'openai' | 'gemini' | 'deepseek' | 'anthropic' | 'qwen';
 
 export interface TextCompleteParams {
   apiKey: string;

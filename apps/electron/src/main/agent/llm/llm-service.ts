@@ -3,6 +3,7 @@ import { OpenAIProvider } from './providers/openai-provider';
 import { GeminiProvider } from './providers/gemini-provider';
 import { DeepSeekProvider } from './providers/deepseek-provider';
 import { AnthropicProvider } from './providers/anthropic-provider';
+import { QwenProvider } from './providers/qwen-provider';
 import {
   isVisionCapable,
   visionCapableProviders,
@@ -130,6 +131,7 @@ export class LLMService {
     gemini: '',
     deepseek: '',
     anthropic: '',
+    qwen: '',
   };
 
   /** Stateless provider adapters keyed by provider id. */
@@ -149,6 +151,7 @@ export class LLMService {
       gemini: providers?.gemini ?? new GeminiProvider(),
       deepseek: providers?.deepseek ?? new DeepSeekProvider(),
       anthropic: providers?.anthropic ?? new AnthropicProvider(),
+      qwen: providers?.qwen ?? new QwenProvider(),
     };
     this.budgetTracker = new TokenBudgetTracker(budgetLimitUsd);
   }

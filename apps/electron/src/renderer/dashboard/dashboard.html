@@ -1405,10 +1405,10 @@
           <div class="form-group">
             <label for="model">Whisper Model</label>
             <select id="model">
-              <option value="tiny.en">tiny.en — Fastest (~75 MB)</option>
-              <option value="base.en">base.en — Fast (~142 MB)</option>
-              <option value="small.en">small.en — Balanced (~466 MB)</option>
-              <option value="medium.en">medium.en — Accurate (~1.5 GB)</option>
+              <option value="tiny">tiny — Fastest (~75 MB)</option>
+              <option value="base">base — Fast (~142 MB)</option>
+              <option value="small">small — Balanced (~466 MB)</option>
+              <option value="medium">medium — Best for Urdu (~1.5 GB)</option>
             </select>
           </div>
           <div class="form-group">
@@ -1489,6 +1489,11 @@
             <label for="anthropicApiKey">Anthropic API Key</label>
             <input type="password" id="anthropicApiKey" placeholder="sk-ant-...">
             <span class="hint">Get your key at console.anthropic.com</span>
+          </div>
+          <div class="form-group">
+            <label for="qwenApiKey">Alibaba Cloud (Qwen) API Key</label>
+            <input type="password" id="qwenApiKey" placeholder="sk-...">
+            <span class="hint">Get your key at Model Studio (bailian.console.alibabacloud.com)</span>
           </div>
           <div class="form-group">
             <label for="deepseekApiKey">DeepSeek API Key</label>
@@ -2035,7 +2040,7 @@
         var settings = await window.electronAPI.getSettings();
         currentSettings = settings;
         document.getElementById('hotkey').value = settings.hotkeyAccelerator || '';
-        document.getElementById('model').value = settings.modelName || 'base.en';
+        document.getElementById('model').value = settings.modelName || 'base';
         document.getElementById('language').value = settings.language || 'en';
         document.getElementById('autoCopy').checked = settings.autoCopyToClipboard !== false;
         document.getElementById('showWidget').checked = settings.showFloatingWidget !== false;
@@ -2046,6 +2051,7 @@
         populateModels(settings.llmProvider || 'openai', settings.llmModel);
         document.getElementById('geminiApiKey').value = settings.geminiApiKey || '';
         document.getElementById('anthropicApiKey').value = settings.anthropicApiKey || '';
+        document.getElementById('qwenApiKey').value = settings.qwenApiKey || '';
         document.getElementById('deepseekApiKey').value = settings.deepseekApiKey || '';
         document.getElementById('browserHeadless').checked = settings.browserAgentHeadless === true;
         document.getElementById('hotkey').classList.remove('error');
@@ -2088,6 +2094,7 @@
         llmModel: document.getElementById('llmModel').value,
         geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
         anthropicApiKey: document.getElementById('anthropicApiKey').value.trim(),
+        qwenApiKey: document.getElementById('qwenApiKey').value.trim(),
         deepseekApiKey: document.getElementById('deepseekApiKey').value.trim(),
         browserAgentHeadless: document.getElementById('browserHeadless').checked,
       };
@@ -2117,7 +2124,28 @@
       if (e.shiftKey) parts.push('Shift');
       var key = e.key;
       if (!['Control', 'Meta', 'Alt', 'Shift'].includes(key)) {
-        parts.push(key.length === 1 ? key.toUpperCase() : key);
+        // Electron accelerators use their own key names. e.key gives " " for the
+        // spacebar and "ArrowUp" for arrows, neither of which Electron accepts.
+        var ELECTRON_KEYS = {
+          ' ': 'Space',
+          'ArrowUp': 'Up',
+          'ArrowDown': 'Down',
+          'ArrowLeft': 'Left',
+          'ArrowRight': 'Right',
+          'Escape': 'Esc',
+          'Enter': 'Return',
+        };
+        var name = ELECTRON_KEYS[key] || (key.length === 1 ? key.toUpperCase() : key);
+
+        // A global shortcut with no modifier would swallow that key system-wide.
+        if (parts.length === 0) {
+          hotkeyInput.value = '';
+          hotkeyInput.placeholder = 'Add Ctrl, Alt or Shift — e.g. Ctrl+Shift+Space';
+          hotkeyInput.classList.add('error');
+          return;
+        }
+
+        parts.push(name);
         hotkeyInput.value = parts.join('+');
         hotkeyInput.classList.remove('error');
       }

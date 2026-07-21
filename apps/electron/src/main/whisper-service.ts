@@ -6,8 +6,20 @@ import type { TranscriptionResult } from '../shared/types';
 let transcriber: any = null;
 let loading = false;
 
+/** Model id currently held in `transcriber`, so a model switch can reload it. */
+let loadedModelId: string | null = null;
+
 /** Default model ID used by the application */
-const DEFAULT_MODEL_ID = 'Xenova/whisper-medium.en';
+const DEFAULT_MODEL_ID = 'Xenova/whisper-medium';
+
+/**
+ * Expands a short model name from settings ("small") into a full Hugging Face
+ * id ("Xenova/whisper-small"). Ids that already contain a slash pass through.
+ */
+export function resolveModelId(name?: string | null): string {
+  if (!name) return DEFAULT_MODEL_ID;
+  return name.includes('/') ? name : `Xenova/whisper-${name}`;
+}
 
 /** Required files for a Whisper ONNX model variant */
 const WHISPER_REQUIRED_FILES = [
@@ -47,13 +59,25 @@ export class WhisperService {
 
   async initialize(options?: {
     cacheDir?: string;
+    modelId?: string;
     onProgress?: (data: ProgressData) => void;
   }): Promise<void> {
-    if (this.initialized || loading) return;
+    const modelId = options?.modelId ?? DEFAULT_MODEL_ID;
+
+    // Already holding this exact model, or a load is in flight.
+    if ((this.initialized && loadedModelId === modelId) || loading) return;
+
+    // A different model was requested — drop the old pipeline and reload.
+    if (this.initialized && loadedModelId !== modelId) {
+      console.log(`[Whisper] Switching model ${loadedModelId} -> ${modelId}`);
+      this.initialized = false;
+      transcriber = null;
+    }
+
     loading = true;
 
     try {
-      console.log('[Whisper] Loading model Xenova/whisper-small.en...');
+      console.log(`[Whisper] Loading model ${modelId}...`);
       const dynamicImport = new Function('specifier', 'return import(specifier)');
       const transformers = await dynamicImport('@xenova/transformers');
 
@@ -69,9 +93,9 @@ export class WhisperService {
         transformers.env.useBrowserCache = false;
 
         // Verify model files exist before attempting to load
-        if (!WhisperService.isModelReady(cacheDir)) {
+        if (!WhisperService.isModelReady(cacheDir, modelId)) {
           throw new Error(
-            'Model files not found. Please complete the model download in onboarding.'
+            `Model files for ${modelId} not found. Download it from Settings, or complete onboarding.`
           );
         }
       } else if (onProgress) {
@@ -82,14 +106,15 @@ export class WhisperService {
 
       transcriber = await transformers.pipeline(
         'automatic-speech-recognition',
-        DEFAULT_MODEL_ID,
+        modelId,
         {
           quantized: true,
           progress_callback: onProgress || undefined,
         }
       );
       this.initialized = true;
-      console.log('[Whisper] Model loaded successfully');
+      loadedModelId = modelId;
+      console.log(`[Whisper] Model ${modelId} loaded successfully`);
     } catch (err) {
       console.error('[Whisper] Failed to load model:', err);
       throw err;
@@ -98,7 +123,15 @@ export class WhisperService {
     }
   }
 
-  async transcribe(wavFilePath: string): Promise<TranscriptionResult> {
+  /**
+   * @param language 'auto' lets Whisper detect the language, which is the
+   * correct default for code-switched speech — forcing 'ur' pushes output into
+   * Urdu script, and forcing 'en' mangles Urdu words.
+   */
+  async transcribe(
+    wavFilePath: string,
+    language: 'en' | 'ur' | 'auto' = 'auto'
+  ): Promise<TranscriptionResult> {
     if (!this.initialized || !transcriber) {
       throw new Error('WhisperService not initialized');
     }
@@ -116,6 +149,7 @@ export class WhisperService {
         stride_length_s: 5,
         return_timestamps: false,
         sampling_rate: 16000,
+        ...(language !== 'auto' ? { language, task: 'transcribe' } : {}),
       });
       const text = (result?.text || '').trim();
       const durationMs = Date.now() - startTime;

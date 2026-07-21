@@ -15,7 +15,7 @@ import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
-import { WhisperService } from './whisper-service';
+import { WhisperService, resolveModelId } from './whisper-service';
 import { ModelDownloader } from './model-downloader';
 import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
@@ -62,7 +62,7 @@ const settingsStore = new Store<Settings>({
   defaults: {
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
-    modelName: 'base.en',
+    modelName: 'base',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
@@ -75,6 +75,7 @@ const settingsStore = new Store<Settings>({
     geminiApiKey: '',
     deepseekApiKey: '',
     anthropicApiKey: '',
+    qwenApiKey: '',
     llmProvider: '',
     llmModel: '',
     browserAgentHeadless: false,
@@ -368,6 +369,9 @@ function setupIPC(): void {
     if ('anthropicApiKey' in partial) {
       agentService.setProviderApiKey('anthropic', partial.anthropicApiKey as string);
     }
+    if ('qwenApiKey' in partial) {
+      agentService.setProviderApiKey('qwen', partial.qwenApiKey as string);
+    }
     // Provider/model selection → instant switch
     if ('llmProvider' in partial || 'llmModel' in partial) {
       const provider = (partial.llmProvider ?? settingsStore.get('llmProvider')) as string;
@@ -454,7 +458,10 @@ function setupIPC(): void {
 
       // Initialize whisper service if needed
       if (!whisperService.isInitialized()) {
-        await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+        await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
       }
 
       // Write WAV buffer to temp file
@@ -550,7 +557,7 @@ function setupIPC(): void {
   // Download model handler
   ipcMain.handle(IpcChannel.DOWNLOAD_MODEL, async (_event, modelName: string) => {
     // Map short model names to full Hugging Face model IDs
-    let modelId = modelName || 'Xenova/whisper-small.en';
+    let modelId = modelName || 'Xenova/whisper-small';
     if (!modelId.includes('/')) {
       modelId = `Xenova/whisper-${modelId}`;
     }
@@ -570,7 +577,10 @@ function setupIPC(): void {
         });
       }
       // Initialize WhisperService with the cache dir
-      await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+      await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
       return;
     }
 
@@ -603,7 +613,10 @@ function setupIPC(): void {
       });
 
       // On completion, initialize WhisperService with the cache dir
-      await whisperService.initialize({ cacheDir: MODEL_CACHE_DIR });
+      await whisperService.initialize({
+        cacheDir: MODEL_CACHE_DIR,
+        modelId: resolveModelId(settingsStore.get('modelName')),
+      });
     } catch (err) {
       console.error('[Model] Download/load failed:', err);
       throw err;
@@ -652,10 +665,12 @@ if (!gotTheLock) {
     const geminiKey = settingsStore.get('geminiApiKey');
     const deepseekKey = settingsStore.get('deepseekApiKey');
     const anthropicKey = settingsStore.get('anthropicApiKey');
+    const qwenKey = settingsStore.get('qwenApiKey');
     if (openaiKey) agentService.setProviderApiKey('openai', openaiKey);
     if (geminiKey) agentService.setProviderApiKey('gemini', geminiKey);
     if (deepseekKey) agentService.setProviderApiKey('deepseek', deepseekKey);
     if (anthropicKey) agentService.setProviderApiKey('anthropic', anthropicKey);
+    if (qwenKey) agentService.setProviderApiKey('qwen', qwenKey);
     // Seed active selection if persisted
     const savedProvider = settingsStore.get('llmProvider');
     const savedModel = settingsStore.get('llmModel');
