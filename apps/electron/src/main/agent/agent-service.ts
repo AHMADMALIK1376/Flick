@@ -8,6 +8,7 @@ import { PermissionGate } from './tools/permission-gate';
 import { registerDesktopTools } from './tools/desktop-tools';
 import { ToolLoop } from './tool-loop';
 import { createLlmTurnFn } from './llm-turn-adapter';
+import { ConfirmBridge, type PendingConfirm } from './confirm-bridge';
 import { ProviderId } from './llm/providers/llm-provider';
 import {
   AgentResult,
@@ -21,6 +22,14 @@ export interface AgentNotifier {
   notifySuccess(msg: string): void;
   notifyError(msg: string): void;
   notifyUnrecognized(text: string): void;
+  /**
+   * Ask the user to approve a risky tool call. Return false if no window is
+   * available to show the prompt — the gate then fails closed.
+   *
+   * Optional so existing callers and tests keep working; when absent, risky
+   * tools are declined rather than silently executed.
+   */
+  requestConfirm?(prompt: PendingConfirm): boolean;
 }
 
 /**
@@ -43,6 +52,7 @@ export class AgentService {
   private llmService: LLMService;
   private toolRegistry: ToolRegistry;
   private toolLoop: ToolLoop;
+  private confirmBridge: ConfirmBridge;
 
   private enabled: boolean = false;
 
@@ -57,16 +67,28 @@ export class AgentService {
     this.toolRegistry = new ToolRegistry();
     registerDesktopTools(this.toolRegistry, this.actionExecutor);
 
-    // TEMPORARY: auto-approve until the confirm dialog lands. Every desktop
-    // tool is side-effecting, so a gate that cannot prompt would block
-    // every action.
-    const gate = new PermissionGate(async () => true);
+    // Risky tools prompt the user through the renderer. With no notifier
+    // support the send returns false and the gate fails closed, so a missing
+    // dialog declines rather than silently acting.
+    this.confirmBridge = new ConfirmBridge(
+      (prompt) => this.notifier.requestConfirm?.(prompt) ?? false
+    );
 
     this.toolLoop = new ToolLoop(
       this.toolRegistry,
-      gate,
+      new PermissionGate(this.confirmBridge.confirm),
       createLlmTurnFn(this.llmService, this.toolRegistry)
     );
+  }
+
+  /** Called by main when the renderer answers a confirmation prompt. */
+  resolveConfirm(id: string, approved: boolean): void {
+    this.confirmBridge.resolve(id, approved);
+  }
+
+  /** Declines every outstanding prompt, e.g. when the dashboard closes. */
+  cancelPendingConfirms(): void {
+    this.confirmBridge.cancelAll();
   }
 
   /** Names of every registered tool. Used by tests and the dashboard. */

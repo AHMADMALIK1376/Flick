@@ -106,6 +106,23 @@ const electronAPI = {
     ipcRenderer.on(IpcChannel.AGENT_TOAST, (_event, toast) => callback(toast));
   },
 
+  onAgentConfirmRequest(
+    callback: (prompt: {
+      id: string;
+      toolName: string;
+      description: string;
+      args: Record<string, unknown>;
+    }) => void
+  ): void {
+    ipcRenderer.on(IpcChannel.AGENT_CONFIRM_REQUEST, (_event, prompt) =>
+      callback(prompt)
+    );
+  },
+
+  respondAgentConfirm(id: string, approved: boolean): Promise<void> {
+    return ipcRenderer.invoke(IpcChannel.AGENT_CONFIRM_RESPONSE, id, approved);
+  },
+
   cancelBrowserTask(taskId: string): Promise<void> {
     return ipcRenderer.invoke(IpcChannel.BROWSER_TASK_CANCEL, taskId);
   },

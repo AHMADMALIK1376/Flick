@@ -43,12 +43,31 @@ describe('registerDesktopTools', () => {
     ]);
   });
 
-  it('marks all desktop tools as side-effecting', () => {
+  /**
+   * Risk tiers, not a blanket flag. Prompting for "open notepad" trains the
+   * user to click through every dialog, which makes the gate worthless when it
+   * matters.
+   */
+  it('does not gate reversible, visible actions', () => {
     const { registry } = setup();
 
-    for (const tool of registry.list()) {
-      expect(tool.sideEffecting, `${tool.name} should be side-effecting`).toBe(true);
+    for (const name of ['open_application', 'open_url', 'web_search', 'open_path']) {
+      expect(registry.get(name)?.sideEffecting, `${name} should not prompt`).toBe(
+        false
+      );
     }
+  });
+
+  it('gates typing, which lands in whatever window has focus', () => {
+    const { registry } = setup();
+
+    expect(registry.get('type_text')?.sideEffecting).toBe(true);
+  });
+
+  it('gates system control, which includes locking the screen', () => {
+    const { registry } = setup();
+
+    expect(registry.get('system_control')?.sideEffecting).toBe(true);
   });
 
   it('maps open_application onto the executor intent', async () => {

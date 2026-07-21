@@ -54,6 +54,17 @@ const agentService = new AgentService({
       dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, { type: 'warning', message: `Command not recognized: "${text}"`, autoDismissMs: 4000 });
     }
   },
+  requestConfirm: (prompt) => {
+    // No dashboard means nobody can answer, so report undelivered and let the
+    // permission gate fail closed.
+    if (!dashboardWindow || dashboardWindow.isDestroyed()) {
+      return false;
+    }
+    dashboardWindow.show();
+    dashboardWindow.focus();
+    dashboardWindow.webContents.send(IpcChannel.AGENT_CONFIRM_REQUEST, prompt);
+    return true;
+  },
 });
 
 // Keep a reference to the raw electron-store for direct access where needed
@@ -546,6 +557,14 @@ function setupIPC(): void {
   ipcMain.handle(IpcChannel.CHAT_SEND, async (_event, text: string) => {
     return await agentService.processChatCommand(text);
   });
+
+  // Answer to a tool confirmation prompt
+  ipcMain.handle(
+    IpcChannel.AGENT_CONFIRM_RESPONSE,
+    (_event, id: string, approved: boolean) => {
+      agentService.resolveConfirm(id, approved);
+    }
+  );
 
   // Browser agent handlers
   ipcMain.handle(IpcChannel.BROWSER_TASK_CANCEL, () => {

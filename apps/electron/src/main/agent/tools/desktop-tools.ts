@@ -11,6 +11,15 @@ interface DesktopTool {
   /** The single argument this tool takes, mapped to the intent's `target`. */
   arg: string;
   argDescription: string;
+  /**
+   * Whether this tool must be confirmed before running.
+   *
+   * Risk tiers rather than a blanket flag: opening an app or a URL is visible
+   * and trivially undone, so prompting for it only teaches the user to click
+   * through dialogs. Typing and system control are gated because a misheard
+   * command cannot be taken back.
+   */
+  confirm: boolean;
 }
 
 const DESKTOP_TOOLS: DesktopTool[] = [
@@ -21,6 +30,7 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'open_application',
     arg: 'name',
     argDescription: 'Application name',
+    confirm: false,
   },
   {
     name: 'open_url',
@@ -28,6 +38,7 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'open_url',
     arg: 'url',
     argDescription: 'Full URL including https://',
+    confirm: false,
   },
   {
     name: 'open_path',
@@ -36,6 +47,7 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'open_path',
     arg: 'path',
     argDescription: 'Absolute file or folder path',
+    confirm: false,
   },
   {
     name: 'type_text',
@@ -43,6 +55,7 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'type_text',
     arg: 'text',
     argDescription: 'Text to type',
+    confirm: true,
   },
   {
     name: 'web_search',
@@ -50,6 +63,7 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'web_search',
     arg: 'query',
     argDescription: 'Search query',
+    confirm: false,
   },
   {
     name: 'system_control',
@@ -58,15 +72,16 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'system_control',
     arg: 'command',
     argDescription: 'One of the supported control commands',
+    confirm: true,
   },
 ];
 
 /**
  * Exposes the existing ActionExecutor as callable tools.
  *
- * Every desktop tool is marked side-effecting: launching apps, typing, and
- * changing system settings all alter state outside Flick, so each one passes
- * through PermissionGate.
+ * Only the genuinely irreversible tools are gated behind PermissionGate —
+ * see the `confirm` field. Opening an app or a URL is visible and trivially
+ * undone; typing lands in whatever window has focus and cannot be taken back.
  */
 export function registerDesktopTools(
   registry: ToolRegistry,
@@ -77,7 +92,7 @@ export function registerDesktopTools(
       {
         name: tool.name,
         description: tool.description,
-        sideEffecting: true,
+        sideEffecting: tool.confirm,
         inputSchema: {
           type: 'object',
           properties: {
