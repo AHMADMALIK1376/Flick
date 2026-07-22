@@ -18,9 +18,14 @@ import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
 import { resolveModelCacheDir, describeModelCacheDir } from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
+import { ModelDownloader } from './model-downloader';
+import { ClipboardManager } from './clipboard-manager';
+import { HistoryStore } from './history-store';
+import { TrayManager } from './tray-manager';
+import { AgentService } from './agent/agent-service';
+import type { ProviderId } from './agent/llm/providers/llm-provider';
 
-/** Rate-limits download progress logging to one line per whole percent. */
-const downloadProgressThrottle = new ProgressThrottle();
+// ── Crash guards ────────────────────────────────────────────────────────────
 
 /**
  * Last-resort guard so a background failure cannot kill the app.
@@ -40,15 +45,11 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
 process.on('unhandledRejection', (reason) => {
   safeError('[Main] Unhandled rejection:', reason);
 });
-import { ModelDownloader } from './model-downloader';
-import { ClipboardManager } from './clipboard-manager';
-import { SettingsStore } from './settings-store';
-import { HistoryStore } from './history-store';
-import { TrayManager } from './tray-manager';
-import { AgentService } from './agent/agent-service';
-import type { ProviderId } from './agent/llm/providers/llm-provider';
 
 // ── Model Cache Directory ───────────────────────────────────────────────────
+
+/** Rate-limits download progress logging to one line per whole percent. */
+const downloadProgressThrottle = new ProgressThrottle();
 
 /**
  * Where Whisper model files live. Read on each use rather than captured once,
@@ -63,7 +64,7 @@ function getModelCacheDir(): string {
 
   if (dir !== lastLoggedModelDir) {
     lastLoggedModelDir = dir;
-    console.log(
+    safeLog(
       `[Models] storing in ${describeModelCacheDir(configured, app.getPath('userData'))}`,
     );
   }
@@ -79,7 +80,6 @@ let lastLoggedModelDir: string | null = null;
 
 // ── Stores & Services ───────────────────────────────────────────────────────
 
-const settingsStoreInstance = new SettingsStore();
 const historyStoreInstance = new HistoryStore();
 const whisperService = new WhisperService();
 const clipboardManager = new ClipboardManager();
