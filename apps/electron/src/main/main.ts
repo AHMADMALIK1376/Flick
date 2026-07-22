@@ -17,6 +17,29 @@ import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
 import { resolveModelCacheDir, describeModelCacheDir } from './model-paths';
+import { safeLog, safeError, ProgressThrottle } from './logging';
+
+/** Rate-limits download progress logging to one line per whole percent. */
+const downloadProgressThrottle = new ProgressThrottle();
+
+/**
+ * Last-resort guard so a background failure cannot kill the app.
+ *
+ * Electron's default for an uncaught exception in the main process is a modal
+ * crash dialog and process exit — losing an in-flight model download. A broken
+ * stdout pipe is benign and silenced; anything else is reported loudly but
+ * still not fatal, since a running assistant beats a crash dialog.
+ */
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err?.code === 'EPIPE') {
+    return;
+  }
+  safeError('[Main] Uncaught exception:', err?.stack || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  safeError('[Main] Unhandled rejection:', reason);
+});
 import { ModelDownloader } from './model-downloader';
 import { ClipboardManager } from './clipboard-manager';
 import { SettingsStore } from './settings-store';
@@ -640,10 +663,16 @@ function setupIPC(): void {
           if (onboardingWindow && !onboardingWindow.isDestroyed()) {
             onboardingWindow.webContents.send(IpcChannel.DOWNLOAD_PROGRESS, progress);
           }
-          console.log(`[Model] ${progress.status || 'downloading'}: ${progress.currentFile || ''} ${progress.percentage}%`);
+          // Throttled and crash-safe: this fires per chunk, and a raw
+          // console.log here threw EPIPE and killed the app mid-download.
+          if (downloadProgressThrottle.shouldLog(progress.percentage)) {
+            safeLog(
+              `[Model] ${progress.status || 'downloading'}: ${progress.currentFile || ''} ${progress.percentage}%`,
+            );
+          }
         },
         onError: (error) => {
-          console.error(`[Model] Download error: ${error.message} (${error.code})`);
+          safeError(`[Model] Download error: ${error.message} (${error.code})`);
           if (onboardingWindow && !onboardingWindow.isDestroyed()) {
             onboardingWindow.webContents.send(IpcChannel.DOWNLOAD_PROGRESS, {
               modelName: modelId,
