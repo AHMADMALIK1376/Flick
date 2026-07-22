@@ -1,7 +1,64 @@
 import * as path from 'path';
+import * as fs from 'fs';
 
 /** Subdirectory used when no custom model location is configured. */
 const DEFAULT_SUBDIR = path.join('models', 'onnx');
+
+/** Read-only config file, sitting beside the app. Never written by the app. */
+export const CONFIG_FILENAME = 'flick.config.json';
+
+/** Environment variable override, highest precedence of all. */
+export const MODEL_DIR_ENV = 'FLICK_MODEL_DIR';
+
+/**
+ * Reads the model directory from the read-only config file, if present.
+ *
+ * The settings file is rewritten by the app and by the settings UI, so a value
+ * stored only there can be erased by an unrelated save. Anything that must
+ * survive that belongs here instead: this file is read and never written.
+ *
+ * Returns null when absent or unreadable — a broken config falls through to
+ * the next source rather than stopping the app from starting.
+ */
+export function readConfigModelDir(...searchDirs: string[]): string | null {
+  for (const dir of searchDirs) {
+    if (!dir) continue;
+    try {
+      const raw = fs.readFileSync(path.join(dir, CONFIG_FILENAME), 'utf8');
+      const parsed = JSON.parse(raw.replace(/^﻿/, '')) as {
+        modelCacheDir?: unknown;
+      };
+      const value = parsed.modelCacheDir;
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    } catch {
+      // Missing or malformed here; try the next location.
+    }
+  }
+  return null;
+}
+
+/**
+ * Picks the model directory from every source, highest precedence first:
+ * environment variable, read-only config file, then the settings file.
+ */
+export function pickModelDirSource(sources: {
+  env?: string | null;
+  configFile?: string | null;
+  setting?: string | null;
+}): { value: string; source: string } {
+  const env = (sources.env ?? '').trim();
+  if (env) return { value: env, source: MODEL_DIR_ENV };
+
+  const config = (sources.configFile ?? '').trim();
+  if (config) return { value: config, source: CONFIG_FILENAME };
+
+  const setting = (sources.setting ?? '').trim();
+  if (setting) return { value: setting, source: 'settings' };
+
+  return { value: '', source: 'default' };
+}
 
 /**
  * Decides where Whisper model files live.

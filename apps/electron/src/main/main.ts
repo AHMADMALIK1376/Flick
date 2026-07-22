@@ -16,7 +16,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
-import { resolveModelCacheDir, describeModelCacheDir } from './model-paths';
+import {
+  resolveModelCacheDir,
+  readConfigModelDir,
+  pickModelDirSource,
+  MODEL_DIR_ENV,
+} from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
 import { ModelDownloader } from './model-downloader';
 import { ClipboardManager } from './clipboard-manager';
@@ -58,15 +63,36 @@ const downloadProgressThrottle = new ProgressThrottle();
  * Creates the directory on demand — the user may point this at a drive path
  * that does not exist yet.
  */
+/**
+ * The model directory, from the highest-precedence source that supplies one.
+ *
+ * The settings file is rewritten by the app and by the settings UI, so a value
+ * held only there can be erased by an unrelated save. FLICK_MODEL_DIR and
+ * flick.config.json cannot be written by the app at all, so a path set there
+ * survives regardless of what happens to settings.
+ */
+function getConfiguredModelDir(): { value: string; source: string } {
+  return pickModelDirSource({
+    env: process.env[MODEL_DIR_ENV],
+    // Searched rather than assumed: the app root differs between a dev run
+    // (electron build/main/main.js) and a packaged build.
+    configFile: readConfigModelDir(
+      app.getAppPath(),
+      process.cwd(),
+      path.join(__dirname, '..', '..'),
+      path.join(__dirname, '..', '..', '..'),
+    ),
+    setting: settingsStore.get('modelCacheDir'),
+  });
+}
+
 function getModelCacheDir(): string {
-  const configured = settingsStore.get('modelCacheDir');
+  const { value: configured, source } = getConfiguredModelDir();
   const dir = resolveModelCacheDir(configured, app.getPath('userData'));
 
   if (dir !== lastLoggedModelDir) {
     lastLoggedModelDir = dir;
-    safeLog(
-      `[Models] storing in ${describeModelCacheDir(configured, app.getPath('userData'))}`,
-    );
+    safeLog(`[Models] storing in ${dir} (source: ${source})`);
   }
 
   if (!fs.existsSync(dir)) {
@@ -825,11 +851,9 @@ if (!gotTheLock) {
     safeLog(
       `[Startup] onboardingComplete=${onboardingDone} modelReady=${modelReady} (${wantedModel})`,
     );
+    const modelDirChoice = getConfiguredModelDir();
     safeLog(
-      `[Startup] models will go to ${describeModelCacheDir(
-        settingsStore.get('modelCacheDir'),
-        app.getPath('userData'),
-      )}`,
+      `[Startup] models will go to ${getModelCacheDir()} (source: ${modelDirChoice.source})`,
     );
 
     if (!onboardingDone || !modelReady) {
