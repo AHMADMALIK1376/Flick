@@ -2085,7 +2085,12 @@
         currentSettings = settings;
         document.getElementById('hotkey').value = settings.hotkeyAccelerator || '';
         document.getElementById('model').value = settings.modelName || 'base';
-        document.getElementById('modelCacheDir').value = settings.modelCacheDir || '';
+        var mcd = document.getElementById('modelCacheDir');
+        mcd.value = settings.modelCacheDir || '';
+        // Marks the field as populated from stored settings. saveSettings only
+        // sends it once this is set, so a save that happens before this panel
+        // was ever opened cannot overwrite the stored path with an empty box.
+        mcd.dataset.loaded = '1';
         document.getElementById('language').value = settings.language || 'en';
         document.getElementById('autoCopy').checked = settings.autoCopyToClipboard !== false;
         document.getElementById('showWidget').checked = settings.showFloatingWidget !== false;
@@ -2129,7 +2134,6 @@
       var newSettings = {
         hotkeyAccelerator: hotkeyValue,
         modelName: document.getElementById('model').value,
-        modelCacheDir: document.getElementById('modelCacheDir').value.trim(),
         language: document.getElementById('language').value,
         autoCopyToClipboard: document.getElementById('autoCopy').checked,
         showFloatingWidget: document.getElementById('showWidget').checked,
@@ -2144,6 +2148,14 @@
         deepseekApiKey: document.getElementById('deepseekApiKey').value.trim(),
         browserAgentHeadless: document.getElementById('browserHeadless').checked,
       };
+
+      // Only send the model folder once loadSettings has populated it.
+      // Sending an unpopulated box would replace the stored path with "" and
+      // silently relocate a 1.5GB model store back to the default drive.
+      var mcdInput = document.getElementById('modelCacheDir');
+      if (mcdInput && mcdInput.dataset.loaded === '1') {
+        newSettings.modelCacheDir = mcdInput.value.trim();
+      }
 
       if (window.electronAPI) {
         try {
