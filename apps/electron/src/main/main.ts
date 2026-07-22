@@ -787,36 +787,64 @@ if (!gotTheLock) {
     const hotkey = settingsStore.get('hotkeyAccelerator');
     registerGlobalHotkey(hotkey);
 
-    // Which file the settings actually came from. Two different runs once
-    // reported opposite values for the same keys, which is only explicable by
-    // reading different files.
+    // Which file the settings actually came from, and whether the store agrees
+    // with it. A run once reported values that contradicted the file on disk,
+    // which means the store and the file had diverged.
     safeLog(`[Startup] settings file: ${settingsStore.path}`);
     safeLog(`[Startup] userData: ${app.getPath('userData')}`);
+    try {
+      const raw = fs.readFileSync(settingsStore.path, 'utf8');
+      const onDisk = JSON.parse(raw) as Partial<Settings>;
+      safeLog(
+        `[Startup] on disk : onboardingComplete=${onDisk.onboardingComplete} modelCacheDir=${JSON.stringify(onDisk.modelCacheDir)}`,
+      );
+      safeLog(
+        `[Startup] in store: onboardingComplete=${settingsStore.get('onboardingComplete')} modelCacheDir=${JSON.stringify(settingsStore.get('modelCacheDir'))}`,
+      );
+      if (onDisk.modelCacheDir !== settingsStore.get('modelCacheDir')) {
+        safeError(
+          '[Startup] MISMATCH: the settings store disagrees with the file on disk.',
+        );
+      }
+    } catch (err) {
+      safeError('[Startup] could not read settings file directly:', err);
+    }
 
-    // Show onboarding on first launch
+    // Show onboarding on first launch — or any time the model is missing.
+    //
+    // "Onboarding finished" and "a model is on disk" are independent facts,
+    // and the download only ever happens during onboarding. Treating the flag
+    // as proof a model exists strands the user: the dashboard opens, voice
+    // silently never works, and no UI path exists to fetch a model. Deleting
+    // the model store, selecting a model that was never downloaded, or moving
+    // the model directory all produce exactly that state.
     const onboardingDone = settingsStore.get('onboardingComplete');
-    console.log(
-      `[Startup] onboardingComplete=${onboardingDone} -> opening ${
-        onboardingDone ? 'dashboard' : 'onboarding'
-      }`,
+    const wantedModel = resolveModelId(settingsStore.get('modelName'));
+    const modelReady = WhisperService.isModelReady(getModelCacheDir(), wantedModel);
+
+    safeLog(
+      `[Startup] onboardingComplete=${onboardingDone} modelReady=${modelReady} (${wantedModel})`,
     );
-    console.log(
+    safeLog(
       `[Startup] models will go to ${describeModelCacheDir(
         settingsStore.get('modelCacheDir'),
         app.getPath('userData'),
       )}`,
     );
 
-    if (!onboardingDone) {
+    if (!onboardingDone || !modelReady) {
+      if (onboardingDone) {
+        safeLog('[Startup] setup was complete but no model is present — re-running setup');
+      }
       onboardingWindow = createOnboardingWindow();
       onboardingWindow.show();
       onboardingWindow.focus();
-      console.log('[Startup] onboarding window opened');
+      safeLog('[Startup] onboarding window opened');
     } else {
       // Create dashboard window when onboarding is already complete
       dashboardWindow = createDashboardWindow();
       dashboardWindow.once('ready-to-show', () =>
-        console.log('[Startup] dashboard window shown'),
+        safeLog('[Startup] dashboard window shown'),
       );
     }
   });
