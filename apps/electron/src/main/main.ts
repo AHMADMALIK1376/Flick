@@ -787,6 +787,12 @@ if (!gotTheLock) {
     const hotkey = settingsStore.get('hotkeyAccelerator');
     registerGlobalHotkey(hotkey);
 
+    // Which file the settings actually came from. Two different runs once
+    // reported opposite values for the same keys, which is only explicable by
+    // reading different files.
+    safeLog(`[Startup] settings file: ${settingsStore.path}`);
+    safeLog(`[Startup] userData: ${app.getPath('userData')}`);
+
     // Show onboarding on first launch
     const onboardingDone = settingsStore.get('onboardingComplete');
     console.log(
