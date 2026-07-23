@@ -30,6 +30,10 @@ export interface Settings {
   deepseekApiKey: string;
   anthropicApiKey: string;
   qwenApiKey: string;
+  /** Picovoice access key for hands-free wake-word activation. Empty = off. */
+  picovoiceAccessKey: string;
+  /** Wake word: a built-in name ("JARVIS", "COMPUTER") or a path to a .ppn. */
+  wakeWord: string;
   llmProvider: string;
   llmModel: string;
   browserAgentHeadless: boolean;
