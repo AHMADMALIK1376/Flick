@@ -10,6 +10,7 @@ import { registerBrowserTools } from './tools/browser-tools';
 import { ToolLoop } from './tool-loop';
 import { createLlmTurnFn } from './llm-turn-adapter';
 import { ConfirmBridge, type PendingConfirm } from './confirm-bridge';
+import { isBareAddress, buildGreeting } from './greeting';
 import { ProviderId } from './llm/providers/llm-provider';
 import {
   AgentResult,
@@ -31,6 +32,11 @@ export interface AgentNotifier {
    * tools are declined rather than silently executed.
    */
   requestConfirm?(prompt: PendingConfirm): boolean;
+  /**
+   * Speak a line aloud. Optional so existing callers and tests keep working;
+   * when absent, Flick simply stays silent.
+   */
+  speak?(text: string): void;
 }
 
 /**
@@ -122,6 +128,16 @@ export class AgentService {
       return { handled: false };
     }
 
+    // Addressed by name with no command ("Flick", "hey Flick") — greet and
+    // wait, the way you'd say "Hey Siri" and pause.
+    if (isBareAddress(text)) {
+      const greeting = buildGreeting(new Date());
+      console.log('[Agent] bare address — greeting');
+      this.notifier.speak?.(greeting);
+      this.notifier.notifySuccess(greeting);
+      return { handled: true };
+    }
+
     // Run command detection (local, no network)
     const detection = this.commandDetector.detect(text);
     console.log(
@@ -184,11 +200,15 @@ export class AgentService {
       return { handled: false };
     }
 
+    // Flick speaks her result aloud on the voice path, so a spoken command
+    // gets a spoken reply.
     const firstFailure = outcome.steps.find((s) => !s.result.ok);
     if (firstFailure && !firstFailure.result.ok) {
       this.notifier.notifyError(firstFailure.result.error);
+      this.notifier.speak?.(firstFailure.result.error);
     } else if (outcome.finalMessage) {
       this.notifier.notifySuccess(outcome.finalMessage);
+      this.notifier.speak?.(outcome.finalMessage);
     }
 
     return { handled: true, action: lastEntry };

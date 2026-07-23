@@ -138,6 +138,13 @@ const agentService = new AgentService({
     dashboardWindow.webContents.send(IpcChannel.AGENT_CONFIRM_REQUEST, prompt);
     return true;
   },
+  speak: (text) => {
+    // The widget window is always alive, so it is the reliable place to speak
+    // from. The renderer uses the Web Speech API with the OS voice.
+    if (widgetWindow && !widgetWindow.isDestroyed()) {
+      widgetWindow.webContents.send(IpcChannel.AGENT_SPEAK, text);
+    }
+  },
 });
 
 // Keep a reference to the raw electron-store for direct access where needed

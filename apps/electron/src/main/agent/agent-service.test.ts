@@ -27,6 +27,7 @@ function notifier() {
     notifySuccess: vi.fn(),
     notifyError: vi.fn(),
     notifyUnrecognized: vi.fn(),
+    speak: vi.fn(),
   };
 }
 
@@ -53,6 +54,30 @@ describe('AgentService', () => {
     const result = await service.process('open chrome');
 
     expect(result.handled).toBe(false);
+  });
+
+  it('greets and speaks when addressed by name with no command', async () => {
+    service.setEnabled(true);
+
+    const result = await service.process('Flick');
+
+    expect(result.handled).toBe(true);
+    expect(notify.speak).toHaveBeenCalledOnce();
+    expect(notify.speak.mock.calls[0][0]).toMatch(/boss/i);
+  });
+
+  it('does not greet when a real command follows the name', async () => {
+    service.setEnabled(true);
+
+    // "flick open notepad" is a command, not a bare greeting. It won't reach
+    // the tool loop here (no LLM), but it must not be treated as a greeting.
+    const result = await service.process('flick open notepad');
+
+    expect(notify.speak).not.toHaveBeenCalledWith(
+      expect.stringMatching(/what can i do for you/i),
+    );
+    // handled either way; the point is it is not the greeting branch.
+    expect(result).toBeDefined();
   });
 
   it('registers the desktop tools on construction', () => {
