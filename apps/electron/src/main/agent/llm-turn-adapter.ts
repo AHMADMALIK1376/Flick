@@ -50,12 +50,53 @@ RESPONSE FORMAT — reply with JSON only, no prose and no markdown fences:
   clear intent rather than asking for clarification when the meaning is obvious.`;
 }
 
-/** Removes ```json fences some models add despite being told not to. */
-function stripFences(text: string): string {
-  return text
-    .replace(/^\s*```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/, '')
-    .trim();
+/**
+ * Pulls the first complete JSON object out of a model reply.
+ *
+ * Models routinely wrap the object in prose or markdown fences despite being
+ * told not to — "Sure, here's the JSON:" followed by a fenced block. Treating
+ * the whole reply as JSON makes any such wrapping a hard parse failure, which
+ * showed up to the user as "I didn't understand that" on commands the model
+ * had in fact understood.
+ *
+ * Scans for a balanced object, tracking string literals and escapes so that a
+ * brace inside the text being typed does not end the scan early.
+ */
+export function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
 }
 
 function parseToolCalls(raw: unknown): ToolCall[] {
@@ -107,10 +148,22 @@ export function createLlmTurnFn(
       };
     }
 
-    let parsed: { tool_calls?: unknown; final_message?: unknown };
-    try {
-      parsed = JSON.parse(stripFences(result.text));
-    } catch {
+    const json = extractJsonObject(result.text);
+    let parsed: { tool_calls?: unknown; final_message?: unknown } | null = null;
+    if (json) {
+      try {
+        parsed = JSON.parse(json);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    if (!parsed) {
+      // Log the raw reply so an unparseable response is diagnosable rather than
+      // just "I didn't understand that".
+      console.warn(
+        `[Agent] could not parse model reply as JSON: ${result.text.slice(0, 300)}`,
+      );
       return {
         toolCalls: [],
         finalMessage: "I didn't understand that. Could you say it again?",
