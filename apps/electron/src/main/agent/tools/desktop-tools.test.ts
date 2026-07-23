@@ -58,16 +58,19 @@ describe('registerDesktopTools', () => {
     }
   });
 
-  it('gates typing, which lands in whatever window has focus', () => {
+  // Typing and system control run without a prompt: both are visible and
+  // reversible (Ctrl+Z; unmute; unlock). browser_task is the gated one — it
+  // acts as the signed-in user on real sites and is tested in browser-tools.
+  it('does not gate typing', () => {
     const { registry } = setup();
 
-    expect(registry.get('type_text')?.sideEffecting).toBe(true);
+    expect(registry.get('type_text')?.sideEffecting).toBe(false);
   });
 
-  it('gates system control, which includes locking the screen', () => {
+  it('does not gate system control', () => {
     const { registry } = setup();
 
-    expect(registry.get('system_control')?.sideEffecting).toBe(true);
+    expect(registry.get('system_control')?.sideEffecting).toBe(false);
   });
 
   it('maps open_application onto the executor intent', async () => {

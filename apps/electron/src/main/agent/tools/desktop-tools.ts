@@ -55,7 +55,9 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'type_text',
     arg: 'text',
     argDescription: 'Text to type',
-    confirm: true,
+    // Runs without asking: the user sees it happen and Ctrl+Z undoes it.
+    // The genuinely unrecoverable tool is browser_task, which stays gated.
+    confirm: false,
   },
   {
     name: 'web_search',
@@ -72,7 +74,8 @@ const DESKTOP_TOOLS: DesktopTool[] = [
     action: 'system_control',
     arg: 'command',
     argDescription: 'One of the supported control commands',
-    confirm: true,
+    // Mute/volume/lock are trivially reversible, so no prompt.
+    confirm: false,
   },
 ];
 
