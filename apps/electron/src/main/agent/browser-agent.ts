@@ -195,11 +195,28 @@ export class BrowserAgent {
       }
     }
 
-    // Launch Chromium with persistent context
-    this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
+    // Launch with persistent context. Uses the real installed Chrome with the
+    // automation flag stripped, so sites that block automated browsers (Google
+    // most strictly) treat it as a normal browser — and so it shares the same
+    // browser binary as the connector login window that saved the session.
+    // Falls back to bundled Chromium when Chrome is not installed.
+    const launchOptions = {
       headless: this.config.headless,
       viewport: this.config.viewport,
-    });
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: ['--disable-blink-features=AutomationControlled'],
+    };
+    try {
+      this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
+        ...launchOptions,
+        channel: 'chrome',
+      });
+    } catch {
+      this.context = await chromium.launchPersistentContext(
+        this.config.userDataDir,
+        launchOptions,
+      );
+    }
 
     // Get or create a page from the context
     const pages = this.context.pages();

@@ -23,11 +23,7 @@ export class ConnectorLoginBrowser {
   async open(homeUrl: string): Promise<void> {
     await this.close();
 
-    this.context = await chromium.launchPersistentContext(this.userDataDir, {
-      headless: false,
-      viewport: null, // use the real window size
-      args: ['--start-maximized'],
-    });
+    this.context = await this.launch();
 
     this.context.on('close', () => {
       this.context = null;
@@ -59,5 +55,42 @@ export class ConnectorLoginBrowser {
 
   get isOpen(): boolean {
     return this.context !== null;
+  }
+
+  /**
+   * Launches a login window that looks like an ordinary browser.
+   *
+   * Google (and some others) refuse sign-in from a browser they detect as
+   * automated. Two things defeat that detection: using the real installed
+   * Chrome rather than Playwright's bundled Chromium, and removing the
+   * --enable-automation flag that sets navigator.webdriver and shows the
+   * "controlled by automated software" banner.
+   *
+   * Falls back to bundled Chromium (still with the flags stripped) if Chrome
+   * is not installed — logins to less strict sites still work there.
+   */
+  private async launch(): Promise<BrowserContext> {
+    const options = {
+      headless: false,
+      viewport: null,
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: [
+        '--start-maximized',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    };
+
+    try {
+      return await chromium.launchPersistentContext(this.userDataDir, {
+        ...options,
+        channel: 'chrome',
+      });
+    } catch (err) {
+      safeError(
+        '[Connectors] real Chrome unavailable, falling back to bundled Chromium:',
+        err,
+      );
+      return chromium.launchPersistentContext(this.userDataDir, options);
+    }
   }
 }
