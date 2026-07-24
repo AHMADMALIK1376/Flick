@@ -33,4 +33,8 @@ export enum IpcChannel {
   AGENT_CONFIRM_REQUEST = 'agent-confirm-request',
   AGENT_CONFIRM_RESPONSE = 'agent-confirm-response',
   AGENT_SPEAK = 'agent-speak',
+  CONNECTORS_LIST = 'connectors-list',
+  CONNECTOR_OPEN_LOGIN = 'connector-open-login',
+  CONNECTOR_MARK_CONNECTED = 'connector-mark-connected',
+  CONNECTOR_DISCONNECT = 'connector-disconnect',
 }

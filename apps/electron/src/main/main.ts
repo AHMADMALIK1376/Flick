@@ -23,6 +23,8 @@ import {
   MODEL_DIR_ENV,
 } from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
+import { ConnectorManager } from './connectors/connector-manager';
+import { ConnectorLoginBrowser } from './connectors/connector-browser';
 import { ModelDownloader } from './model-downloader';
 import { ClipboardManager } from './clipboard-manager';
 import { HistoryStore } from './history-store';
@@ -108,6 +110,21 @@ let lastLoggedModelDir: string | null = null;
 
 const historyStoreInstance = new HistoryStore();
 const whisperService = new WhisperService();
+
+// ── Connectors ───────────────────────────────────────────────────────────────
+// Kept in a store of their own rather than in settings.json, which is rewritten
+// often and has a history of clobbering values.
+const connectorStore = new Store<{ connectedIds: string[] }>({
+  name: 'connectors',
+  defaults: { connectedIds: [] },
+});
+const connectorManager = new ConnectorManager({
+  getConnectedIds: () => connectorStore.get('connectedIds'),
+  setConnectedIds: (ids) => connectorStore.set('connectedIds', ids),
+});
+const loginBrowser = new ConnectorLoginBrowser(
+  path.join(app.getPath('userData'), 'browser-data'),
+);
 const clipboardManager = new ClipboardManager();
 const trayManager = new TrayManager();
 
@@ -647,6 +664,48 @@ function setupIPC(): void {
     }
   );
 
+  // ── Connectors ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IpcChannel.CONNECTORS_LIST, () => connectorManager.list());
+
+  // Open a service's login page in a visible window. The agent's own browser
+  // must release the shared profile first — only one Chromium can hold it.
+  ipcMain.handle(
+    IpcChannel.CONNECTOR_OPEN_LOGIN,
+    async (_event, idOrUrl: string) => {
+      const connector = connectorManager.resolve(idOrUrl);
+      if (!connector) {
+        return { ok: false, error: `Not a valid service or URL: "${idOrUrl}"` };
+      }
+      try {
+        await agentService.shutdownBrowser();
+        await loginBrowser.open(connector.homeUrl);
+        return { ok: true, connector };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+  );
+
+  // User finished logging in. Close the window to flush the session to disk,
+  // then record the connector as connected.
+  ipcMain.handle(
+    IpcChannel.CONNECTOR_MARK_CONNECTED,
+    async (_event, id: string) => {
+      await loginBrowser.close();
+      connectorManager.markConnected(id);
+      return connectorManager.list();
+    }
+  );
+
+  ipcMain.handle(IpcChannel.CONNECTOR_DISCONNECT, (_event, id: string) => {
+    connectorManager.disconnect(id);
+    return connectorManager.list();
+  });
+
   // Browser agent handlers
   ipcMain.handle(IpcChannel.BROWSER_TASK_CANCEL, () => {
     agentService.cancelBrowserTask();
@@ -888,6 +947,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   agentService.shutdownBrowser();
+  void loginBrowser.close();
 });
 
 app.on('will-quit', () => {

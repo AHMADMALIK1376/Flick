@@ -1308,6 +1308,10 @@
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
         Agent
       </div>
+      <div class="nav-item" data-panel="connectors" onclick="switchPanel('connectors')">
+        <svg viewBox="0 0 24 24"><path d="M17 7h-4v2h4c1.65 0 3 1.35 3 3s-1.35 3-3 3h-4v2h4c2.76 0 5-2.24 5-5s-2.24-5-5-5zm-6 8H7c-1.65 0-3-1.35-3-3s1.35-3 3-3h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-2zM8 11h8v2H8z"/></svg>
+        Connectors
+      </div>
       <div class="nav-item" data-panel="settings" onclick="switchPanel('settings')">
         <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
         Settings
@@ -1562,6 +1566,24 @@
       </section>
 
       <!-- Agent Log Panel -->
+      <section class="panel" id="panel-connectors">
+        <div class="panel-header">
+          <h2>Connectors</h2>
+        </div>
+        <p style="color: rgba(255,255,255,0.55); font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+          Connect a service once — Flick opens its sign-in page, you log in yourself, and the session is saved.
+          After that, "Flick, open Gmail and read my latest email" uses your login. Your password is never seen or stored by Flick.
+        </p>
+
+        <div style="display:flex; gap: 8px; margin-bottom: 24px;">
+          <input type="text" id="connector-url" placeholder="Or connect any site — paste a URL (e.g. console.anthropic.com)"
+            style="flex:1; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04); color: #fff; font-size: 13px;">
+          <button class="btn btn-primary" onclick="connectUrl()">Connect</button>
+        </div>
+
+        <div id="connectors-list"></div>
+      </section>
+
       <section class="panel" id="panel-agent">
         <div class="panel-header">
           <h2>Agent Log</h2>
@@ -1645,11 +1667,91 @@
       if (panel === 'settings') { loadSettings(); }
       if (panel === 'home') { loadHomeData(); }
       if (panel === 'agent') { loadAgentLog(); }
+      if (panel === 'connectors') { loadConnectors(); }
       if (panel === 'chat') {
         renderQuickCommands();
         var chatInput = document.getElementById('chat-input');
         if (chatInput) chatInput.focus();
       }
+    }
+
+    // ── Connectors ──
+    async function loadConnectors() {
+      try {
+        var list = await window.electronAPI.listConnectors();
+        renderConnectors(list || []);
+      } catch (e) {
+        console.error('Failed to load connectors:', e);
+      }
+    }
+
+    function renderConnectors(list) {
+      var container = document.getElementById('connectors-list');
+      container.innerHTML = '';
+      list.forEach(function (c) {
+        var row = document.createElement('div');
+        row.className = 'glass-card';
+        row.style.cssText = 'display:flex; align-items:center; gap:14px; padding:14px 16px; margin-bottom:10px;';
+
+        var status = c.connected
+          ? '<span style="color:#22c55e; font-size:12px; font-weight:600;">● Connected</span>'
+          : '<span style="color:rgba(255,255,255,0.4); font-size:12px;">Not connected</span>';
+
+        var actions = c.connected
+          ? '<button class="btn" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); color:#e5e7eb;" onclick="disconnectService(\'' + c.id + '\')">Disconnect</button>'
+          : '<button class="btn btn-primary" id="conn-btn-' + c.id + '" onclick="connectService(\'' + c.id + '\', \'' + c.name.replace(/'/g, "\\'") + '\')">Connect</button>';
+
+        row.innerHTML =
+          '<div style="font-size:22px;">' + c.icon + '</div>' +
+          '<div style="flex:1;"><div style="font-weight:600; color:#fff;">' + c.name + '</div>' + status + '</div>' +
+          '<div id="conn-actions-' + c.id + '">' + actions + '</div>';
+        container.appendChild(row);
+      });
+    }
+
+    async function connectService(id, name) {
+      var actions = document.getElementById('conn-actions-' + id);
+      var res = await window.electronAPI.openConnectorLogin(id);
+      if (!res || !res.ok) {
+        showToast((res && res.error) || 'Could not open the login page', 'error');
+        return;
+      }
+      // A visible browser window is now open. Wait for the user to finish.
+      if (actions) {
+        actions.innerHTML =
+          '<button class="btn btn-primary" onclick="doneLoggingIn(\'' + id + '\')">Done — I\'m logged in</button>';
+      }
+      showToast('Log into ' + (name || id) + ' in the window that opened, then click "Done".', 'success', 8000);
+    }
+
+    async function doneLoggingIn(id) {
+      try {
+        var list = await window.electronAPI.markConnectorConnected(id);
+        renderConnectors(list || []);
+        showToast('Connected. Flick can now use this account.', 'success');
+      } catch (e) {
+        showToast('Something went wrong saving the connection.', 'error');
+      }
+    }
+
+    async function disconnectService(id) {
+      var list = await window.electronAPI.disconnectConnector(id);
+      renderConnectors(list || []);
+    }
+
+    async function connectUrl() {
+      var input = document.getElementById('connector-url');
+      var url = (input.value || '').trim();
+      if (!url) { input.focus(); return; }
+      var res = await window.electronAPI.openConnectorLogin(url);
+      if (!res || !res.ok) {
+        showToast((res && res.error) || 'That does not look like a valid URL', 'error');
+        return;
+      }
+      input.value = '';
+      loadConnectors();
+      var cid = res.connector && res.connector.id;
+      showToast('Log in, then come back and click "Done" on ' + (cid || 'the site') + '.', 'success', 8000);
     }
 
     // ── Home Panel ──

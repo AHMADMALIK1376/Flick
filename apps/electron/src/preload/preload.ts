@@ -131,6 +131,23 @@ const electronAPI = {
     return ipcRenderer.invoke(IpcChannel.BROWSER_TASK_LOGIN_COMPLETE, taskId);
   },
 
+  // Connectors
+  listConnectors(): Promise<unknown> {
+    return ipcRenderer.invoke(IpcChannel.CONNECTORS_LIST);
+  },
+
+  openConnectorLogin(idOrUrl: string): Promise<unknown> {
+    return ipcRenderer.invoke(IpcChannel.CONNECTOR_OPEN_LOGIN, idOrUrl);
+  },
+
+  markConnectorConnected(id: string): Promise<unknown> {
+    return ipcRenderer.invoke(IpcChannel.CONNECTOR_MARK_CONNECTED, id);
+  },
+
+  disconnectConnector(id: string): Promise<unknown> {
+    return ipcRenderer.invoke(IpcChannel.CONNECTOR_DISCONNECT, id);
+  },
+
   onBrowserTaskProgress(callback: (progress: BrowserTaskProgressMessage) => void): void {
     ipcRenderer.on(IpcChannel.BROWSER_TASK_PROGRESS, (_event, progress) => callback(progress));
   },
