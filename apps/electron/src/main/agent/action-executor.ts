@@ -1,4 +1,4 @@
-import { shell, app } from 'electron';
+import { shell, app, clipboard } from 'electron';
 import { exec } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
@@ -221,9 +221,21 @@ export class ActionExecutor {
    * Sets clipboard content then simulates Ctrl+V via SendKeys.
    */
   private async typeText(target: string): Promise<void> {
-    // Escape single quotes for PowerShell string
-    const escapedText = target.replace(/'/g, "''");
-    const command = `powershell -Command "Set-Clipboard -Value '${escapedText}'; Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"`;
+    // Set the clipboard through Electron, not through a shell command. The old
+    // approach interpolated the text into a single-quoted PowerShell string,
+    // which shattered on newlines (a multi-line letter) and was fragile with
+    // quotes. clipboard.writeText handles newlines, quotes, and unicode with no
+    // escaping at all.
+    clipboard.writeText(target);
+
+    // Give the clipboard a moment to settle before pasting.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // The paste command now contains no user text — only a fixed key combo —
+    // so nothing the user dictates can break it.
+    const command =
+      'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; ' +
+      "[System.Windows.Forms.SendKeys]::SendWait('^v')\"";
     await execAsync(command);
   }
 
