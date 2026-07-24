@@ -1540,16 +1540,6 @@
             <span class="hint">Get your key at Model Studio (bailian.console.alibabacloud.com)</span>
           </div>
           <div class="form-group">
-            <label for="picovoiceAccessKey">Wake Word Access Key (Picovoice)</label>
-            <input type="password" id="picovoiceAccessKey" placeholder="Paste your free Picovoice AccessKey">
-            <span class="hint">Free at console.picovoice.ai. Enables hands-free activation — just say the wake word, no key press. Leave empty to use the hotkey only.</span>
-          </div>
-          <div class="form-group">
-            <label for="wakeWord">Wake Word</label>
-            <input type="text" id="wakeWord" placeholder="JARVIS">
-            <span class="hint">A built-in word (JARVIS, COMPUTER, BUMBLEBEE, ALEXA, PICOVOICE, TERMINATOR) needs no extra file. For a custom "Flick", paste the full path to a .ppn file.</span>
-          </div>
-          <div class="form-group">
             <label for="deepseekApiKey">DeepSeek API Key</label>
             <input type="password" id="deepseekApiKey" placeholder="sk-...">
             <span class="hint">Get your key at platform.deepseek.com</span>
@@ -2112,12 +2102,6 @@
         document.getElementById('geminiApiKey').value = settings.geminiApiKey || '';
         document.getElementById('anthropicApiKey').value = settings.anthropicApiKey || '';
         document.getElementById('qwenApiKey').value = settings.qwenApiKey || '';
-        var pv = document.getElementById('picovoiceAccessKey');
-        pv.value = settings.picovoiceAccessKey || '';
-        pv.dataset.loaded = '1';
-        var ww = document.getElementById('wakeWord');
-        ww.value = settings.wakeWord || 'JARVIS';
-        ww.dataset.loaded = '1';
         document.getElementById('deepseekApiKey').value = settings.deepseekApiKey || '';
         document.getElementById('browserHeadless').checked = settings.browserAgentHeadless === true;
         document.getElementById('hotkey').classList.remove('error');
@@ -2173,15 +2157,6 @@
         newSettings.modelCacheDir = mcdInput.value.trim();
       }
 
-      // Same guard for the wake-word fields — never send an unloaded box.
-      var pvInput = document.getElementById('picovoiceAccessKey');
-      if (pvInput && pvInput.dataset.loaded === '1') {
-        newSettings.picovoiceAccessKey = pvInput.value.trim();
-      }
-      var wwInput = document.getElementById('wakeWord');
-      if (wwInput && wwInput.dataset.loaded === '1') {
-        newSettings.wakeWord = wwInput.value.trim();
-      }
 
       if (window.electronAPI) {
         try {

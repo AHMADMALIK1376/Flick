@@ -23,8 +23,6 @@ import {
   MODEL_DIR_ENV,
 } from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
-import { WakeWordListener } from './wake-word';
-import { createPorcupineListener } from './porcupine-adapter';
 import { ModelDownloader } from './model-downloader';
 import { ClipboardManager } from './clipboard-manager';
 import { HistoryStore } from './history-store';
@@ -106,38 +104,6 @@ function getModelCacheDir(): string {
 /** Last path announced, so the location is logged on change rather than per call. */
 let lastLoggedModelDir: string | null = null;
 
-// ── Wake word ────────────────────────────────────────────────────────────────
-
-let wakeListener: WakeWordListener | null = null;
-
-/**
- * (Re)builds the wake-word listener from settings. Off when no access key is
- * configured; the hotkey path is unaffected either way.
- */
-function initWakeWord(): void {
-  wakeListener?.release();
-  wakeListener = createPorcupineListener({
-    accessKey: settingsStore.get('picovoiceAccessKey'),
-    wakeWord: settingsStore.get('wakeWord'),
-    onWake: () => {
-      // Free the mic for the recorder, acknowledge, then record the command.
-      void wakeListener?.stop();
-      if (widgetWindow && !widgetWindow.isDestroyed()) {
-        widgetWindow.webContents.send(IpcChannel.AGENT_SPEAK, 'Yes, boss?');
-        widgetWindow.webContents.send('start-recording');
-      }
-    },
-  });
-  wakeListener?.start();
-}
-
-/** Restarts listening after a command, if wake word is configured. */
-function resumeWakeWord(): void {
-  if (wakeListener && !wakeListener.isRunning) {
-    wakeListener.start();
-  }
-}
-
 // ── Stores & Services ───────────────────────────────────────────────────────
 
 const historyStoreInstance = new HistoryStore();
@@ -202,8 +168,6 @@ const settingsStore = new Store<Settings>({
     deepseekApiKey: '',
     anthropicApiKey: '',
     qwenApiKey: '',
-    picovoiceAccessKey: '',
-    wakeWord: 'JARVIS',
     llmProvider: '',
     llmModel: '',
     browserAgentHeadless: false,
@@ -480,10 +444,6 @@ function setupIPC(): void {
     if (partial.hotkeyAccelerator) {
       registerGlobalHotkey(partial.hotkeyAccelerator);
     }
-    // Rebuild the wake-word listener if its settings changed.
-    if ('picovoiceAccessKey' in partial || 'wakeWord' in partial) {
-      initWakeWord();
-    }
     // Update agent service settings
     if ('aiAgentEnabled' in partial) {
       agentService.setEnabled(partial.aiAgentEnabled as boolean);
@@ -652,8 +612,6 @@ function setupIPC(): void {
         if (fs.existsSync(tmpFile)) {
           fs.unlinkSync(tmpFile);
         }
-        // Resume wake-word listening now the mic is free again.
-        resumeWakeWord();
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -663,7 +621,6 @@ function setupIPC(): void {
           error: errorMsg,
         });
       }
-      resumeWakeWord();
       throw err;
     }
   });
@@ -863,9 +820,6 @@ if (!gotTheLock) {
     const hotkey = settingsStore.get('hotkeyAccelerator');
     registerGlobalHotkey(hotkey);
 
-    // Hands-free wake word ("Jarvis" by default). No-op without an access key.
-    initWakeWord();
-
     // Which file the settings actually came from, and whether the store agrees
     // with it. A run once reported values that contradicted the file on disk,
     // which means the store and the file had diverged.
@@ -934,7 +888,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   agentService.shutdownBrowser();
-  void wakeListener?.stop().then(() => wakeListener?.release());
 });
 
 app.on('will-quit', () => {
