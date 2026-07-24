@@ -246,6 +246,31 @@ ipc2.on('start-recording', () => {
 ipc2.on('stop-recording', () => {
   if (state === 'recording') stopAndTranscribe();
 });
+
+// Flick speaks. The widget window is always alive, so it is the reliable place
+// to run speech synthesis. Uses the OS voice via the Web Speech API — offline,
+// no dependency, no API key.
+function flickSpeak(text) {
+  try {
+    if (!text || !window.speechSynthesis) return;
+    // Cancel anything mid-sentence so replies do not pile up.
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(String(text));
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    // Prefer a female English voice to match the persona, if one exists.
+    var voices = window.speechSynthesis.getVoices();
+    var preferred = voices.find(function (v) {
+      return /en/i.test(v.lang) && /female|zira|aria|jenny|hazel/i.test(v.name);
+    }) || voices.find(function (v) { return /en/i.test(v.lang); });
+    if (preferred) u.voice = preferred;
+    window.speechSynthesis.speak(u);
+  } catch (e) {
+    // Speech is a nicety; never let it break the widget.
+  }
+}
+
+ipc2.on('agent-speak', function (_e, text) { flickSpeak(text); });
 </script>
 </body>
 </html>

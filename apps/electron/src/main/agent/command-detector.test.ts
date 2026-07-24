@@ -26,6 +26,19 @@ describe('CommandDetector — English (verb-initial)', () => {
     expect(detector.detect('can you open chrome').isCommand).toBe(true);
   });
 
+  // Real transcripts from live testing. Whisper renders "Flick" as "Flix".
+  it('detects a command addressed to the assistant by name', () => {
+    expect(detector.detect('Flix, open the notepad').isCommand).toBe(true);
+  });
+
+  it('detects a command after a greeting', () => {
+    expect(detector.detect('Hello friends, open a notepad').isCommand).toBe(true);
+  });
+
+  it('detects a verbose command addressed by name', () => {
+    expect(detector.detect('flick can you please open notepad').isCommand).toBe(true);
+  });
+
   it('does not scan arbitrarily deep for a verb', () => {
     expect(
       detector.detect('i was thinking we should probably open that later').isCommand

@@ -5,6 +5,20 @@ import { DeepSeekProvider } from './providers/deepseek-provider';
 import { AnthropicProvider } from './providers/anthropic-provider';
 import { QwenProvider } from './providers/qwen-provider';
 import {
+  UsageTracker,
+  estimateImageTokens,
+  formatUsage,
+  tokensFromChars,
+} from './token-usage';
+
+/**
+ * Token cost of one browser screenshot.
+ *
+ * page-analyzer.ts clips to 1280x720, and a browser task sends one of these
+ * per step — up to 15 steps — so this dominates the cost of vision work.
+ */
+const SCREENSHOT_TOKENS = estimateImageTokens(1280, 720);
+import {
   isVisionCapable,
   visionCapableProviders,
   DEFAULT_SELECTION,
@@ -32,8 +46,14 @@ export interface VisionResult {
 const DEFAULT_TEXT_MAX_TOKENS = 500;
 const DEFAULT_VISION_MAX_TOKENS = 800;
 
-/** Text/vision requests are abandoned after this many milliseconds. */
-const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * Text/vision requests are abandoned after this many milliseconds.
+ *
+ * Generous because the agent generates real content — an essay or a letter can
+ * take 30–45s to produce. The old 10s ceiling killed every long-generation
+ * command mid-response ("timed out after 10000ms").
+ */
+const REQUEST_TIMEOUT_MS = 90_000;
 
 /** Default token budget limit in USD. */
 const DEFAULT_BUDGET_LIMIT_USD = 0.50;
@@ -140,6 +160,9 @@ export class LLMService {
   /** Token budget tracker for cost enforcement. */
   readonly budgetTracker: TokenBudgetTracker;
 
+  /** Per-call usage records, for the cost readout. */
+  private readonly usageTracker = new UsageTracker();
+
   /**
    * @param providers Optional provider overrides (used by tests). Any provider
    * not supplied falls back to the real SDK-backed implementation.
@@ -233,8 +256,46 @@ export class LLMService {
     // Track cost
     const outputChars = result.ok ? result.text.length : 0;
     this.budgetTracker.recordTextRequest(inputChars, outputChars);
+    this.recordUsage(provider, model, inputChars, outputChars, 0, 'text');
 
     return result;
+  }
+
+  /**
+   * Records per-call token usage for the usage readout.
+   *
+   * Separate from the budget tracker, which only keeps a running total —
+   * showing the user where their spend went needs the individual records.
+   */
+  private recordUsage(
+    providerId: ProviderId,
+    modelId: string,
+    inputChars: number,
+    outputChars: number,
+    imageTokens: number,
+    label: string,
+  ): void {
+    const record = this.usageTracker.record(
+      providerId,
+      modelId,
+      {
+        inputTokens: tokensFromChars(inputChars) + imageTokens,
+        outputTokens: tokensFromChars(outputChars),
+        imageTokens,
+      },
+      label,
+    );
+    console.log(`[Usage] ${formatUsage(record)}`);
+  }
+
+  /** Per-call usage records, most recent first. */
+  getRecentUsage(limit = 20) {
+    return this.usageTracker.recent(limit);
+  }
+
+  /** Session totals across every model call. */
+  getUsageTotals() {
+    return this.usageTracker.totals();
   }
 
   /**
@@ -280,6 +341,7 @@ export class LLMService {
       // Track cost
       const outputChars = result.ok ? result.text.length : 0;
       this.budgetTracker.recordVisionRequest(inputChars, outputChars);
+      this.recordUsage(provider, model, inputChars, outputChars, SCREENSHOT_TOKENS, 'vision');
       return { result };
     }
 
@@ -312,6 +374,14 @@ export class LLMService {
     // Track cost
     const outputChars = result.ok ? result.text.length : 0;
     this.budgetTracker.recordVisionRequest(inputChars, outputChars);
+    this.recordUsage(
+      fallbackProviderId,
+      fallbackModel,
+      inputChars,
+      outputChars,
+      SCREENSHOT_TOKENS,
+      'vision-fallback',
+    );
     return { result, fallbackProviderId };
   }
 

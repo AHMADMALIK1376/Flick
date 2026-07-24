@@ -15,25 +15,98 @@ import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
 import type { Settings, TranscriptEntry } from '../shared/types';
-import { WhisperService, resolveModelId } from './whisper-service';
+import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
+import {
+  resolveModelCacheDir,
+  readConfigModelDir,
+  pickModelDirSource,
+  MODEL_DIR_ENV,
+} from './model-paths';
+import { safeLog, safeError, ProgressThrottle } from './logging';
 import { ModelDownloader } from './model-downloader';
-import { ModelManager } from './model-manager';
 import { ClipboardManager } from './clipboard-manager';
-import { SettingsStore } from './settings-store';
 import { HistoryStore } from './history-store';
 import { TrayManager } from './tray-manager';
 import { AgentService } from './agent/agent-service';
 import type { ProviderId } from './agent/llm/providers/llm-provider';
 
+// ── Crash guards ────────────────────────────────────────────────────────────
+
+/**
+ * Last-resort guard so a background failure cannot kill the app.
+ *
+ * Electron's default for an uncaught exception in the main process is a modal
+ * crash dialog and process exit — losing an in-flight model download. A broken
+ * stdout pipe is benign and silenced; anything else is reported loudly but
+ * still not fatal, since a running assistant beats a crash dialog.
+ */
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err?.code === 'EPIPE') {
+    return;
+  }
+  safeError('[Main] Uncaught exception:', err?.stack || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  safeError('[Main] Unhandled rejection:', reason);
+});
+
 // ── Model Cache Directory ───────────────────────────────────────────────────
 
-const MODEL_CACHE_DIR = path.join(app.getPath('userData'), 'models', 'onnx');
+/** Rate-limits download progress logging to one line per whole percent. */
+const downloadProgressThrottle = new ProgressThrottle();
+
+/**
+ * Where Whisper model files live. Read on each use rather than captured once,
+ * so changing the location in Settings takes effect without a restart.
+ *
+ * Creates the directory on demand — the user may point this at a drive path
+ * that does not exist yet.
+ */
+/**
+ * The model directory, from the highest-precedence source that supplies one.
+ *
+ * The settings file is rewritten by the app and by the settings UI, so a value
+ * held only there can be erased by an unrelated save. FLICK_MODEL_DIR and
+ * flick.config.json cannot be written by the app at all, so a path set there
+ * survives regardless of what happens to settings.
+ */
+function getConfiguredModelDir(): { value: string; source: string } {
+  return pickModelDirSource({
+    env: process.env[MODEL_DIR_ENV],
+    // Searched rather than assumed: the app root differs between a dev run
+    // (electron build/main/main.js) and a packaged build.
+    configFile: readConfigModelDir(
+      app.getAppPath(),
+      process.cwd(),
+      path.join(__dirname, '..', '..'),
+      path.join(__dirname, '..', '..', '..'),
+    ),
+    setting: settingsStore.get('modelCacheDir'),
+  });
+}
+
+function getModelCacheDir(): string {
+  const { value: configured, source } = getConfiguredModelDir();
+  const dir = resolveModelCacheDir(configured, app.getPath('userData'));
+
+  if (dir !== lastLoggedModelDir) {
+    lastLoggedModelDir = dir;
+    safeLog(`[Models] storing in ${dir} (source: ${source})`);
+  }
+
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+/** Last path announced, so the location is logged on change rather than per call. */
+let lastLoggedModelDir: string | null = null;
 
 // ── Stores & Services ───────────────────────────────────────────────────────
 
-const settingsStoreInstance = new SettingsStore();
 const historyStoreInstance = new HistoryStore();
-const modelManager = new ModelManager();
 const whisperService = new WhisperService();
 const clipboardManager = new ClipboardManager();
 const trayManager = new TrayManager();
@@ -54,6 +127,24 @@ const agentService = new AgentService({
       dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, { type: 'warning', message: `Command not recognized: "${text}"`, autoDismissMs: 4000 });
     }
   },
+  requestConfirm: (prompt) => {
+    // No dashboard means nobody can answer, so report undelivered and let the
+    // permission gate fail closed.
+    if (!dashboardWindow || dashboardWindow.isDestroyed()) {
+      return false;
+    }
+    dashboardWindow.show();
+    dashboardWindow.focus();
+    dashboardWindow.webContents.send(IpcChannel.AGENT_CONFIRM_REQUEST, prompt);
+    return true;
+  },
+  speak: (text) => {
+    // The widget window is always alive, so it is the reliable place to speak
+    // from. The renderer uses the Web Speech API with the OS voice.
+    if (widgetWindow && !widgetWindow.isDestroyed()) {
+      widgetWindow.webContents.send(IpcChannel.AGENT_SPEAK, text);
+    }
+  },
 });
 
 // Keep a reference to the raw electron-store for direct access where needed
@@ -62,7 +153,8 @@ const settingsStore = new Store<Settings>({
   defaults: {
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
-    modelName: 'base',
+    modelName: 'medium',
+    modelCacheDir: '',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
@@ -459,7 +551,7 @@ function setupIPC(): void {
       // Initialize whisper service if needed
       if (!whisperService.isInitialized()) {
         await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
       }
@@ -469,7 +561,10 @@ function setupIPC(): void {
       fs.writeFileSync(tmpFile, Buffer.from(wavBuffer));
 
       try {
-        const result = await whisperService.transcribe(tmpFile);
+        const result = await whisperService.transcribe(
+          tmpFile,
+          resolveLanguage(settingsStore.get('language'))
+        );
 
         // AI Agent processing
         if (agentService.isEnabled() && result.text) {
@@ -544,6 +639,14 @@ function setupIPC(): void {
     return await agentService.processChatCommand(text);
   });
 
+  // Answer to a tool confirmation prompt
+  ipcMain.handle(
+    IpcChannel.AGENT_CONFIRM_RESPONSE,
+    (_event, id: string, approved: boolean) => {
+      agentService.resolveConfirm(id, approved);
+    }
+  );
+
   // Browser agent handlers
   ipcMain.handle(IpcChannel.BROWSER_TASK_CANCEL, () => {
     agentService.cancelBrowserTask();
@@ -561,7 +664,7 @@ function setupIPC(): void {
     if (!modelId.includes('/')) {
       modelId = `Xenova/whisper-${modelId}`;
     }
-    const modelDownloader = new ModelDownloader(MODEL_CACHE_DIR);
+    const modelDownloader = new ModelDownloader(getModelCacheDir());
 
     // If model is already downloaded, skip and send 100% progress
     if (modelDownloader.isModelReady(modelId)) {
@@ -578,7 +681,7 @@ function setupIPC(): void {
       }
       // Initialize WhisperService with the cache dir
       await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
       return;
@@ -588,15 +691,21 @@ function setupIPC(): void {
     try {
       await modelDownloader.download({
         modelId,
-        destDir: MODEL_CACHE_DIR,
+        destDir: getModelCacheDir(),
         onProgress: (progress) => {
           if (onboardingWindow && !onboardingWindow.isDestroyed()) {
             onboardingWindow.webContents.send(IpcChannel.DOWNLOAD_PROGRESS, progress);
           }
-          console.log(`[Model] ${progress.status || 'downloading'}: ${progress.currentFile || ''} ${progress.percentage}%`);
+          // Throttled and crash-safe: this fires per chunk, and a raw
+          // console.log here threw EPIPE and killed the app mid-download.
+          if (downloadProgressThrottle.shouldLog(progress.percentage)) {
+            safeLog(
+              `[Model] ${progress.status || 'downloading'}: ${progress.currentFile || ''} ${progress.percentage}%`,
+            );
+          }
         },
         onError: (error) => {
-          console.error(`[Model] Download error: ${error.message} (${error.code})`);
+          safeError(`[Model] Download error: ${error.message} (${error.code})`);
           if (onboardingWindow && !onboardingWindow.isDestroyed()) {
             onboardingWindow.webContents.send(IpcChannel.DOWNLOAD_PROGRESS, {
               modelName: modelId,
@@ -614,7 +723,7 @@ function setupIPC(): void {
 
       // On completion, initialize WhisperService with the cache dir
       await whisperService.initialize({
-        cacheDir: MODEL_CACHE_DIR,
+        cacheDir: getModelCacheDir(),
         modelId: resolveModelId(settingsStore.get('modelName')),
       });
     } catch (err) {
@@ -711,14 +820,63 @@ if (!gotTheLock) {
     const hotkey = settingsStore.get('hotkeyAccelerator');
     registerGlobalHotkey(hotkey);
 
-    // Show onboarding on first launch
+    // Which file the settings actually came from, and whether the store agrees
+    // with it. A run once reported values that contradicted the file on disk,
+    // which means the store and the file had diverged.
+    safeLog(`[Startup] settings file: ${settingsStore.path}`);
+    safeLog(`[Startup] userData: ${app.getPath('userData')}`);
+    try {
+      const raw = fs.readFileSync(settingsStore.path, 'utf8');
+      const onDisk = JSON.parse(raw) as Partial<Settings>;
+      safeLog(
+        `[Startup] on disk : onboardingComplete=${onDisk.onboardingComplete} modelCacheDir=${JSON.stringify(onDisk.modelCacheDir)}`,
+      );
+      safeLog(
+        `[Startup] in store: onboardingComplete=${settingsStore.get('onboardingComplete')} modelCacheDir=${JSON.stringify(settingsStore.get('modelCacheDir'))}`,
+      );
+      if (onDisk.modelCacheDir !== settingsStore.get('modelCacheDir')) {
+        safeError(
+          '[Startup] MISMATCH: the settings store disagrees with the file on disk.',
+        );
+      }
+    } catch (err) {
+      safeError('[Startup] could not read settings file directly:', err);
+    }
+
+    // Show onboarding on first launch — or any time the model is missing.
+    //
+    // "Onboarding finished" and "a model is on disk" are independent facts,
+    // and the download only ever happens during onboarding. Treating the flag
+    // as proof a model exists strands the user: the dashboard opens, voice
+    // silently never works, and no UI path exists to fetch a model. Deleting
+    // the model store, selecting a model that was never downloaded, or moving
+    // the model directory all produce exactly that state.
     const onboardingDone = settingsStore.get('onboardingComplete');
-    if (!onboardingDone) {
+    const wantedModel = resolveModelId(settingsStore.get('modelName'));
+    const modelReady = WhisperService.isModelReady(getModelCacheDir(), wantedModel);
+
+    safeLog(
+      `[Startup] onboardingComplete=${onboardingDone} modelReady=${modelReady} (${wantedModel})`,
+    );
+    const modelDirChoice = getConfiguredModelDir();
+    safeLog(
+      `[Startup] models will go to ${getModelCacheDir()} (source: ${modelDirChoice.source})`,
+    );
+
+    if (!onboardingDone || !modelReady) {
+      if (onboardingDone) {
+        safeLog('[Startup] setup was complete but no model is present — re-running setup');
+      }
       onboardingWindow = createOnboardingWindow();
       onboardingWindow.show();
+      onboardingWindow.focus();
+      safeLog('[Startup] onboarding window opened');
     } else {
       // Create dashboard window when onboarding is already complete
       dashboardWindow = createDashboardWindow();
+      dashboardWindow.once('ready-to-show', () =>
+        safeLog('[Startup] dashboard window shown'),
+      );
     }
   });
 }

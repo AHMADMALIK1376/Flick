@@ -11,6 +11,12 @@ export interface Settings {
   hotkeyAccelerator: string;
   hotkeyMode: 'toggle' | 'push-to-talk';
   modelName: string;
+  /**
+   * Absolute directory for Whisper model files. Empty means the default
+   * location inside userData. Exists because models are ~1.5GB and the system
+   * drive is often the wrong place for them.
+   */
+  modelCacheDir: string;
   language: string;
   autoCopyToClipboard: boolean;
   showFloatingWidget: boolean;

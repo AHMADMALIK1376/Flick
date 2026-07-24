@@ -30,4 +30,7 @@ export enum IpcChannel {
   BROWSER_TASK_LOGIN_COMPLETE = 'browser-task-login-complete',
   CHAT_SEND = 'chat-send',
   CHAT_RESPONSE = 'chat-response',
+  AGENT_CONFIRM_REQUEST = 'agent-confirm-request',
+  AGENT_CONFIRM_RESPONSE = 'agent-confirm-response',
+  AGENT_SPEAK = 'agent-speak',
 }

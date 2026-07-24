@@ -291,6 +291,52 @@
       50% { opacity: 0.4; }
     }
 
+    /* Tool confirmation prompt */
+    .confirm-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+    }
+    .confirm-overlay.visible { display: flex; }
+    .confirm-card {
+      width: min(440px, calc(100vw - 48px));
+      background: #14141c; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 24px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+    }
+    .confirm-eyebrow {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #fbbf24; margin-bottom: 10px;
+    }
+    .confirm-card h3 {
+      font-size: 17px; font-weight: 600; color: #fff; margin: 0 0 6px;
+    }
+    .confirm-card .desc {
+      font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.6); margin: 0 0 14px;
+    }
+    .confirm-args {
+      display: block; background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
+      padding: 10px 12px; font-size: 13px; color: #e5e7eb;
+      max-height: 140px; overflow-y: auto; overflow-wrap: anywhere;
+      white-space: pre-wrap; margin-bottom: 18px;
+    }
+    .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .confirm-actions button {
+      padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: 1px solid transparent; font-family: inherit;
+    }
+    .confirm-actions .deny {
+      background: rgba(255,255,255,0.06); color: #e5e7eb;
+      border-color: rgba(255,255,255,0.14);
+    }
+    .confirm-actions .deny:hover { background: rgba(255,255,255,0.11); }
+    .confirm-actions .allow { background: #fbbf24; color: #1a1a20; }
+    .confirm-actions .allow:hover { background: #f5b312; }
+    .confirm-hint {
+      font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 12px; text-align: right;
+    }
+
     .hotkey-badge {
       margin-top: 12px;
       font-size: 12px;
@@ -1412,18 +1458,16 @@
             </select>
           </div>
           <div class="form-group">
+            <label for="modelCacheDir">Model Storage Folder</label>
+            <input type="text" id="modelCacheDir" placeholder="Leave empty for the default location">
+            <span class="hint">Whisper models are ~1.5&nbsp;GB. Use an absolute path such as <code>D:\flickmodel</code> to keep them off a full system drive. Relative paths are ignored.</span>
+          </div>
+          <div class="form-group">
             <label for="language">Language</label>
             <select id="language">
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="it">Italian</option>
-              <option value="pt">Portuguese</option>
-              <option value="nl">Dutch</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="zh">Chinese</option>
+              <option value="en">English (also best for Roman Urdu)</option>
+              <option value="ur">Urdu (اردو script output)</option>
+              <option value="auto">Auto-detect — unreliable, may output Hindi</option>
             </select>
           </div>
           <div class="divider"></div>
@@ -2041,6 +2085,12 @@
         currentSettings = settings;
         document.getElementById('hotkey').value = settings.hotkeyAccelerator || '';
         document.getElementById('model').value = settings.modelName || 'base';
+        var mcd = document.getElementById('modelCacheDir');
+        mcd.value = settings.modelCacheDir || '';
+        // Marks the field as populated from stored settings. saveSettings only
+        // sends it once this is set, so a save that happens before this panel
+        // was ever opened cannot overwrite the stored path with an empty box.
+        mcd.dataset.loaded = '1';
         document.getElementById('language').value = settings.language || 'en';
         document.getElementById('autoCopy').checked = settings.autoCopyToClipboard !== false;
         document.getElementById('showWidget').checked = settings.showFloatingWidget !== false;
@@ -2098,6 +2148,15 @@
         deepseekApiKey: document.getElementById('deepseekApiKey').value.trim(),
         browserAgentHeadless: document.getElementById('browserHeadless').checked,
       };
+
+      // Only send the model folder once loadSettings has populated it.
+      // Sending an unpopulated box would replace the stored path with "" and
+      // silently relocate a 1.5GB model store back to the default drive.
+      var mcdInput = document.getElementById('modelCacheDir');
+      if (mcdInput && mcdInput.dataset.loaded === '1') {
+        newSettings.modelCacheDir = mcdInput.value.trim();
+      }
+
 
       if (window.electronAPI) {
         try {
@@ -2503,6 +2562,43 @@
         if (activePanel === 'agent') loadAgentLog();
       });
 
+      // ── Tool confirmation prompt ──────────────────────────────────────────
+      // Risky tools (typing, system control) ask before running. Voice
+      // transcription mishears; a misheard command must not act unchallenged.
+      window.electronAPI.onAgentConfirmRequest(function(prompt) {
+        showConfirmPrompt(prompt);
+      });
+
+      function describeArgs(args) {
+        return Object.keys(args || {})
+          .map(function(k) { return String(args[k]); })
+          .join(' ');
+      }
+
+      function showConfirmPrompt(prompt) {
+        var overlay = document.getElementById('confirm-overlay');
+        document.getElementById('confirm-tool').textContent = prompt.toolName;
+        document.getElementById('confirm-desc').textContent = prompt.description;
+        document.getElementById('confirm-args').textContent = describeArgs(prompt.args);
+        overlay.classList.add('visible');
+
+        function answer(approved) {
+          overlay.classList.remove('visible');
+          document.removeEventListener('keydown', onKey);
+          window.electronAPI.respondAgentConfirm(prompt.id, approved);
+        }
+
+        function onKey(e) {
+          if (e.key === 'Escape') answer(false);
+          if (e.key === 'Enter') answer(true);
+        }
+
+        document.getElementById('confirm-allow').onclick = function() { answer(true); };
+        document.getElementById('confirm-deny').onclick = function() { answer(false); };
+        document.addEventListener('keydown', onKey);
+        document.getElementById('confirm-deny').focus();
+      }
+
       window.electronAPI.onBrowserTaskProgress(function(progress) {
         handleBrowserTaskProgress(progress);
       });
@@ -2540,5 +2636,18 @@
       });
     });
   </script>
+  <div class="confirm-overlay" id="confirm-overlay">
+    <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="confirm-eyebrow">Confirm action</div>
+      <h3 id="confirm-title">Flick wants to run <span id="confirm-tool"></span></h3>
+      <p class="desc" id="confirm-desc"></p>
+      <code class="confirm-args" id="confirm-args"></code>
+      <div class="confirm-actions">
+        <button class="deny" id="confirm-deny">Cancel</button>
+        <button class="allow" id="confirm-allow">Allow</button>
+      </div>
+      <div class="confirm-hint">Enter to allow &middot; Esc to cancel</div>
+    </div>
+  </div>
 </body>
 </html>

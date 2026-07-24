@@ -1,4 +1,4 @@
-import { shell, app } from 'electron';
+import { shell, app, clipboard } from 'electron';
 import { exec } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
@@ -221,9 +221,21 @@ export class ActionExecutor {
    * Sets clipboard content then simulates Ctrl+V via SendKeys.
    */
   private async typeText(target: string): Promise<void> {
-    // Escape single quotes for PowerShell string
-    const escapedText = target.replace(/'/g, "''");
-    const command = `powershell -Command "Set-Clipboard -Value '${escapedText}'; Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"`;
+    // Set the clipboard through Electron, not through a shell command. The old
+    // approach interpolated the text into a single-quoted PowerShell string,
+    // which shattered on newlines (a multi-line letter) and was fragile with
+    // quotes. clipboard.writeText handles newlines, quotes, and unicode with no
+    // escaping at all.
+    clipboard.writeText(target);
+
+    // Give the clipboard a moment to settle before pasting.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // The paste command now contains no user text — only a fixed key combo —
+    // so nothing the user dictates can break it.
+    const command =
+      'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; ' +
+      "[System.Windows.Forms.SendKeys]::SendWait('^v')\"";
     await execAsync(command);
   }
 
@@ -325,8 +337,36 @@ export class ActionExecutor {
    */
   private async executeBrowserTask(intent: ClassifiedIntent): Promise<ExecutionResult> {
     const startTime = Date.now();
-
     try {
+      const result = await this.runBrowserTask(intent.target);
+      return {
+        success: result.status === 'completed',
+        action: intent.action,
+        target: intent.target,
+        error: result.error,
+        durationMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        action: intent.action,
+        target: intent.target,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Runs a browser task and returns the full result, including anything the
+   * agent read off the page.
+   *
+   * The tool layer needs `result`/`structuredData` — a bare success flag tells
+   * the model nothing about what the browser actually found, which is useless
+   * for anything that reads a page rather than just clicking through it.
+   */
+  async runBrowserTask(command: string): Promise<BrowserTaskResult> {
+    {
       // Create BrowserAgent on-demand if not already set up
       if (!this.browserAgent) {
         if (!this.browserNotifier) {
@@ -355,30 +395,15 @@ export class ActionExecutor {
       const signal = this.currentAbortController.signal;
 
       // Execute the browser task
-      const result: BrowserTaskResult = await this.browserAgent.executeTask(
-        { command: intent.target, taskId },
-        signal
-      );
-
-      this.currentAbortController = null;
-
-      return {
-        success: result.status === 'completed',
-        action: intent.action,
-        target: intent.target,
-        error: result.error,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      this.currentAbortController = null;
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        action: intent.action,
-        target: intent.target,
-        error: errorMessage,
-        durationMs: Date.now() - startTime,
-      };
+      try {
+        const result: BrowserTaskResult = await this.browserAgent.executeTask(
+          { command, taskId },
+          signal
+        );
+        return result;
+      } finally {
+        this.currentAbortController = null;
+      }
     }
   }
 }
