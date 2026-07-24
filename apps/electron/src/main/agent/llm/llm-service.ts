@@ -46,8 +46,14 @@ export interface VisionResult {
 const DEFAULT_TEXT_MAX_TOKENS = 500;
 const DEFAULT_VISION_MAX_TOKENS = 800;
 
-/** Text/vision requests are abandoned after this many milliseconds. */
-const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * Text/vision requests are abandoned after this many milliseconds.
+ *
+ * Generous because the agent generates real content — an essay or a letter can
+ * take 30–45s to produce. The old 10s ceiling killed every long-generation
+ * command mid-response ("timed out after 10000ms").
+ */
+const REQUEST_TIMEOUT_MS = 90_000;
 
 /** Default token budget limit in USD. */
 const DEFAULT_BUDGET_LIMIT_USD = 0.50;
