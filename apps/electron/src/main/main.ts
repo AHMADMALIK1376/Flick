@@ -83,7 +83,11 @@ process.on('unhandledRejection', (reason) => {
       fs.mkdirSync(dir, { recursive: true });
     }
     app.setPath('userData', dir);
-    safeLog(`[Startup] userData relocated to ${dir}`);
+    // sessionData holds the Chromium disk/GPU/code caches, which Electron
+    // otherwise keeps under %LOCALAPPDATA% on the system drive — that was
+    // ~100MB left on C: even after userData moved. Point it at the same place.
+    app.setPath('sessionData', dir);
+    safeLog(`[Startup] userData and sessionData relocated to ${dir}`);
   } catch (err) {
     safeError('[Startup] could not relocate userData, using default:', err);
   }
