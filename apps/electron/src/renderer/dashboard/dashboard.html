@@ -2241,15 +2241,23 @@
         showFloatingWidget: document.getElementById('showWidget').checked,
         launchAtStartup: document.getElementById('launchStartup').checked,
         aiAgentEnabled: document.getElementById('aiAgentEnabled').checked,
-        openaiApiKey: apiKeyValue,
         llmProvider: document.getElementById('llmProvider').value,
         llmModel: document.getElementById('llmModel').value,
-        geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
-        anthropicApiKey: document.getElementById('anthropicApiKey').value.trim(),
-        qwenApiKey: document.getElementById('qwenApiKey').value.trim(),
-        deepseekApiKey: document.getElementById('deepseekApiKey').value.trim(),
         browserAgentHeadless: document.getElementById('browserHeadless').checked,
       };
+
+      // API keys: only send a key when the field has a value. An empty password
+      // box means "leave it unchanged", never "erase the saved key" — sending
+      // "" on every save is what silently wiped a working key.
+      function addKeyIfPresent(field, key) {
+        var v = document.getElementById(field).value.trim();
+        if (v) newSettings[key] = v;
+      }
+      addKeyIfPresent('openaiApiKey', 'openaiApiKey');
+      addKeyIfPresent('geminiApiKey', 'geminiApiKey');
+      addKeyIfPresent('anthropicApiKey', 'anthropicApiKey');
+      addKeyIfPresent('qwenApiKey', 'qwenApiKey');
+      addKeyIfPresent('deepseekApiKey', 'deepseekApiKey');
 
       // Only send the model folder once loadSettings has populated it.
       // Sending an unpopulated box would replace the stored path with "" and

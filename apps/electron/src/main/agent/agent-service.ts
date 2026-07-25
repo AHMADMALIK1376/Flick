@@ -341,6 +341,11 @@ export class AgentService {
     this.actionExecutor.setBrowserConfig({ headless: config.headless });
   }
 
+  /** Runs before each browser task, to free the shared browser profile. */
+  setBeforeBrowserTask(fn: () => Promise<void>): void {
+    this.actionExecutor.setBeforeBrowserTask(fn);
+  }
+
   /**
    * Cancels the currently running browser task.
    */

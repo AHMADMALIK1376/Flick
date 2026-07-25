@@ -78,6 +78,13 @@ export class ActionExecutor {
   private browserNotifier: BrowserTaskNotifier | null = null;
   private llm: LLMService | null = null;
   private currentAbortController: AbortController | null = null;
+  /** Runs before a browser task launches, to free the shared browser profile. */
+  private beforeBrowserTask: (() => Promise<void>) | null = null;
+
+  /** Sets a hook run before each browser task (e.g. close a login window). */
+  setBeforeBrowserTask(fn: () => Promise<void>): void {
+    this.beforeBrowserTask = fn;
+  }
 
   /**
    * Sets the shared LLMService used for browser-task LLM access.
@@ -367,6 +374,13 @@ export class ActionExecutor {
    */
   async runBrowserTask(command: string): Promise<BrowserTaskResult> {
     {
+      // Release the shared browser profile before launching. A connector login
+      // window may still hold it, and only one Chromium can own the profile
+      // directory at a time — running both leaves them fighting over it.
+      if (this.beforeBrowserTask) {
+        await this.beforeBrowserTask();
+      }
+
       // Create BrowserAgent on-demand if not already set up
       if (!this.browserAgent) {
         if (!this.browserNotifier) {

@@ -872,6 +872,9 @@ if (!gotTheLock) {
 
     // Pass initial browser config (headless setting)
     agentService.setBrowserConfig({ headless: settingsStore.get('browserAgentHeadless') });
+    // Before any browser task, close a connector login window if one is open —
+    // both use the same profile, and only one Chromium can hold it at a time.
+    agentService.setBeforeBrowserTask(() => loginBrowser.close());
 
     widgetWindow = createFloatingWidget();
     tray = initTray();
