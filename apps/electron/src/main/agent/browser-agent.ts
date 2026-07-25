@@ -204,14 +204,26 @@ export class BrowserAgent {
       headless: this.config.headless,
       viewport: this.config.viewport,
       ignoreDefaultArgs: ['--enable-automation'],
-      args: ['--disable-blink-features=AutomationControlled'],
+      // --start-maximized + window position keep the automated window visible
+      // and in front, so the user can watch the task instead of it running
+      // hidden behind the app.
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--start-maximized',
+        '--window-position=0,0',
+      ],
     };
+    console.log(
+      `[Browser] launching (headless=${this.config.headless}) at ${this.config.userDataDir}`,
+    );
     try {
       this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
         ...launchOptions,
         channel: 'chrome',
       });
-    } catch {
+      console.log('[Browser] using real Chrome');
+    } catch (err) {
+      console.warn('[Browser] real Chrome unavailable, using bundled Chromium:', err instanceof Error ? err.message : err);
       this.context = await chromium.launchPersistentContext(
         this.config.userDataDir,
         launchOptions,
@@ -221,6 +233,11 @@ export class BrowserAgent {
     // Get or create a page from the context
     const pages = this.context.pages();
     this.page = pages.length > 0 ? pages[0] : await this.context.newPage();
+
+    // Raise the window so the user can see the task run.
+    if (!this.config.headless) {
+      await this.page.bringToFront().catch(() => {});
+    }
 
     // Set up crash detection
     this.context.on('close', () => {
