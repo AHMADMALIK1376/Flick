@@ -20,6 +20,7 @@ import {
   resolveModelCacheDir,
   readConfigModelDir,
   readConfigBrowserDir,
+  readConfigKey,
   pickModelDirSource,
   MODEL_DIR_ENV,
   BROWSER_DIR_ENV,
@@ -54,6 +55,39 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
 process.on('unhandledRejection', (reason) => {
   safeError('[Main] Unhandled rejection:', reason);
 });
+
+// ── Relocate the whole userData directory ────────────────────────────────────
+//
+// Moves settings, history, connectors, and all Chromium caches off the system
+// drive when FLICK_USERDATA_DIR or a userDataDir in flick.config.json says so.
+// Must run before any store is created or any path is read — app.setPath only
+// takes effect if nothing has touched userData yet. Falls back to the default
+// (and thus keeps working) if the target can't be created.
+(function relocateUserData(): void {
+  const env = (process.env.FLICK_USERDATA_DIR ?? '').trim();
+  const configured = readConfigKey('userDataDir', [
+    app.getAppPath(),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+  ]);
+  const dir =
+    env && path.isAbsolute(env)
+      ? env
+      : configured && path.isAbsolute(configured)
+        ? configured
+        : null;
+  if (!dir) return;
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    app.setPath('userData', dir);
+    safeLog(`[Startup] userData relocated to ${dir}`);
+  } catch (err) {
+    safeError('[Startup] could not relocate userData, using default:', err);
+  }
+})();
 
 // ── Model Cache Directory ───────────────────────────────────────────────────
 
