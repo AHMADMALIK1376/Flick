@@ -17,6 +17,8 @@ export interface Settings {
    * drive is often the wrong place for them.
    */
   modelCacheDir: string;
+  /** Absolute directory for the browser profile. Empty = default location. */
+  browserDataDir: string;
   language: string;
   autoCopyToClipboard: boolean;
   showFloatingWidget: boolean;

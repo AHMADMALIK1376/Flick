@@ -13,7 +13,9 @@ import { safeError, safeLog } from '../logging';
 export class ConnectorLoginBrowser {
   private context: BrowserContext | null = null;
 
-  constructor(private readonly userDataDir: string) {}
+  /** Resolves the browser profile directory each time, so a relocation in
+   *  settings takes effect without a restart. */
+  constructor(private readonly userDataDir: () => string) {}
 
   /**
    * Opens the service's page in a visible window for the user to sign in.
@@ -80,8 +82,9 @@ export class ConnectorLoginBrowser {
       ],
     };
 
+    const dir = this.userDataDir();
     try {
-      return await chromium.launchPersistentContext(this.userDataDir, {
+      return await chromium.launchPersistentContext(dir, {
         ...options,
         channel: 'chrome',
       });
@@ -90,7 +93,7 @@ export class ConnectorLoginBrowser {
         '[Connectors] real Chrome unavailable, falling back to bundled Chromium:',
         err,
       );
-      return chromium.launchPersistentContext(this.userDataDir, options);
+      return chromium.launchPersistentContext(dir, options);
     }
   }
 }

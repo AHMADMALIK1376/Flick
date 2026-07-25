@@ -9,6 +9,7 @@ export const CONFIG_FILENAME = 'flick.config.json';
 
 /** Environment variable override, highest precedence of all. */
 export const MODEL_DIR_ENV = 'FLICK_MODEL_DIR';
+export const BROWSER_DIR_ENV = 'FLICK_BROWSER_DIR';
 
 /**
  * Reads the model directory from the read-only config file, if present.
@@ -21,14 +22,29 @@ export const MODEL_DIR_ENV = 'FLICK_MODEL_DIR';
  * the next source rather than stopping the app from starting.
  */
 export function readConfigModelDir(...searchDirs: string[]): string | null {
+  return readConfigKey('modelCacheDir', searchDirs);
+}
+
+/** Reads the browser-profile directory from the read-only config file. */
+export function readConfigBrowserDir(...searchDirs: string[]): string | null {
+  return readConfigKey('browserDataDir', searchDirs);
+}
+
+/**
+ * Reads one string key from flick.config.json, searching each directory in
+ * turn. Returns the first non-empty value, or null. A missing file, malformed
+ * JSON, or BOM never throws — it falls through to the next location.
+ */
+export function readConfigKey(
+  key: string,
+  searchDirs: string[],
+): string | null {
   for (const dir of searchDirs) {
     if (!dir) continue;
     try {
       const raw = fs.readFileSync(path.join(dir, CONFIG_FILENAME), 'utf8');
-      const parsed = JSON.parse(raw.replace(/^﻿/, '')) as {
-        modelCacheDir?: unknown;
-      };
-      const value = parsed.modelCacheDir;
+      const parsed = JSON.parse(raw.replace(/^﻿/, '')) as Record<string, unknown>;
+      const value = parsed[key];
       if (typeof value === 'string' && value.trim()) {
         return value.trim();
       }

@@ -337,8 +337,8 @@ export class AgentService {
   /**
    * Updates the browser agent configuration (headless mode).
    */
-  setBrowserConfig(config: { headless: boolean }): void {
-    this.actionExecutor.setBrowserConfig({ headless: config.headless });
+  setBrowserConfig(config: { headless: boolean; userDataDir?: string }): void {
+    this.actionExecutor.setBrowserConfig(config);
   }
 
   /** Runs before each browser task, to free the shared browser profile. */

@@ -1,3 +1,4 @@
 {
-  "modelCacheDir": "D:\\flickmodel"
+  "modelCacheDir": "D:\\flickmodel",
+  "browserDataDir": "D:\\flickmodel\\browser-data"
 }

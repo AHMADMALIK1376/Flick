@@ -19,8 +19,10 @@ import { WhisperService, resolveModelId, resolveLanguage } from './whisper-servi
 import {
   resolveModelCacheDir,
   readConfigModelDir,
+  readConfigBrowserDir,
   pickModelDirSource,
   MODEL_DIR_ENV,
+  BROWSER_DIR_ENV,
 } from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
 import { ConnectorManager } from './connectors/connector-manager';
@@ -106,6 +108,49 @@ function getModelCacheDir(): string {
 /** Last path announced, so the location is logged on change rather than per call. */
 let lastLoggedModelDir: string | null = null;
 
+/**
+ * The browser profile directory — cookies, cache, saved logins for the browser
+ * agent and connectors. It grows large (hundreds of MB), so like the model
+ * store it is relocatable off a full system drive via FLICK_BROWSER_DIR or a
+ * browserDataDir in flick.config.json. Defaults to userData/browser-data.
+ */
+let lastLoggedBrowserDir: string | null = null;
+function getBrowserDataDir(): string {
+  const env = (process.env[BROWSER_DIR_ENV] ?? '').trim();
+  const configFile = readConfigBrowserDir(
+    app.getAppPath(),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+  );
+  const setting = (settingsStore.get('browserDataDir') ?? '').trim();
+
+  let dir: string;
+  let source: string;
+  if (env && path.isAbsolute(env)) {
+    dir = env;
+    source = BROWSER_DIR_ENV;
+  } else if (configFile && path.isAbsolute(configFile)) {
+    dir = configFile;
+    source = 'flick.config.json';
+  } else if (setting && path.isAbsolute(setting)) {
+    dir = setting;
+    source = 'settings';
+  } else {
+    dir = path.join(app.getPath('userData'), 'browser-data');
+    source = 'default';
+  }
+
+  if (dir !== lastLoggedBrowserDir) {
+    lastLoggedBrowserDir = dir;
+    safeLog(`[Browser] profile at ${dir} (source: ${source})`);
+  }
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
 // ── Stores & Services ───────────────────────────────────────────────────────
 
 const historyStoreInstance = new HistoryStore();
@@ -122,9 +167,7 @@ const connectorManager = new ConnectorManager({
   getConnectedIds: () => connectorStore.get('connectedIds'),
   setConnectedIds: (ids) => connectorStore.set('connectedIds', ids),
 });
-const loginBrowser = new ConnectorLoginBrowser(
-  path.join(app.getPath('userData'), 'browser-data'),
-);
+const loginBrowser = new ConnectorLoginBrowser(() => getBrowserDataDir());
 const clipboardManager = new ClipboardManager();
 const trayManager = new TrayManager();
 
@@ -172,6 +215,7 @@ const settingsStore = new Store<Settings>({
     hotkeyMode: 'toggle' as const,
     modelName: 'medium',
     modelCacheDir: '',
+    browserDataDir: '',
     language: 'en',
     autoCopyToClipboard: true,
     showFloatingWidget: true,
@@ -490,7 +534,7 @@ function setupIPC(): void {
       }
     }
     if ('browserAgentHeadless' in partial) {
-      agentService.setBrowserConfig({ headless: partial.browserAgentHeadless as boolean });
+      agentService.setBrowserConfig({ headless: partial.browserAgentHeadless as boolean, userDataDir: getBrowserDataDir() });
     }
   });
 
@@ -871,7 +915,7 @@ if (!gotTheLock) {
     });
 
     // Pass initial browser config (headless setting)
-    agentService.setBrowserConfig({ headless: settingsStore.get('browserAgentHeadless') });
+    agentService.setBrowserConfig({ headless: settingsStore.get('browserAgentHeadless'), userDataDir: getBrowserDataDir() });
     // Before any browser task, close a connector login window if one is open —
     // both use the same profile, and only one Chromium can hold it at a time.
     agentService.setBeforeBrowserTask(() => loginBrowser.close());

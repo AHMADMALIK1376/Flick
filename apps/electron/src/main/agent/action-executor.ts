@@ -74,7 +74,9 @@ function execAsync(command: string): Promise<{ stdout: string; stderr: string }>
  */
 export class ActionExecutor {
   private browserAgent: BrowserAgent | null = null;
-  private browserConfig: { headless: boolean } = { headless: false };
+  private browserConfig: { headless: boolean; userDataDir?: string } = {
+    headless: false,
+  };
   private browserNotifier: BrowserTaskNotifier | null = null;
   private llm: LLMService | null = null;
   private currentAbortController: AbortController | null = null;
@@ -104,7 +106,9 @@ export class ActionExecutor {
       this.browserAgent = new BrowserAgent(
         {
           headless: this.browserConfig.headless,
-          userDataDir: path.join(app.getPath('userData'), 'browser-data'),
+          userDataDir:
+            this.browserConfig.userDataDir ??
+            path.join(app.getPath('userData'), 'browser-data'),
           viewport: { width: 1280, height: 720 },
           maxSteps: 15,
         },
@@ -117,7 +121,7 @@ export class ActionExecutor {
   /**
    * Updates the browser agent configuration (headless mode).
    */
-  setBrowserConfig(config: { headless: boolean }): void {
+  setBrowserConfig(config: { headless: boolean; userDataDir?: string }): void {
     this.browserConfig = config;
     if (this.browserAgent) {
       this.browserAgent.updateConfig({
@@ -392,7 +396,9 @@ export class ActionExecutor {
         this.browserAgent = new BrowserAgent(
           {
             headless: this.browserConfig.headless,
-            userDataDir: path.join(app.getPath('userData'), 'browser-data'),
+            userDataDir:
+            this.browserConfig.userDataDir ??
+            path.join(app.getPath('userData'), 'browser-data'),
             viewport: { width: 1280, height: 720 },
             maxSteps: 15,
           },
