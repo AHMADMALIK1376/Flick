@@ -101,6 +101,22 @@ process.on('unhandledRejection', (reason) => {
   }
 })();
 
+// Playwright's bundled browsers (~1.3GB) default to %LOCALAPPDATA%. Set the
+// path from config rather than a machine environment variable, so it works on
+// a fresh checkout without anyone having to configure their shell.
+(function relocatePlaywrightBrowsers(): void {
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return; // respect an explicit override
+  const configured = readConfigKey('playwrightBrowsersPath', [
+    app.getAppPath(),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+  ]);
+  if (!configured || !path.isAbsolute(configured)) return;
+  process.env.PLAYWRIGHT_BROWSERS_PATH = configured;
+  safeLog(`[Startup] Playwright browsers at ${configured}`);
+})();
+
 // ── Model Cache Directory ───────────────────────────────────────────────────
 
 /** Rate-limits download progress logging to one line per whole percent. */
