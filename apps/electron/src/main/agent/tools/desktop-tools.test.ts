@@ -37,10 +37,22 @@ describe('registerDesktopTools', () => {
       'open_application',
       'open_path',
       'open_url',
+      'power_control',
       'system_control',
       'type_text',
       'web_search',
     ]);
+  });
+
+  /**
+   * Power actions are split from system_control precisely so they can be gated:
+   * shutting down loses unsaved work everywhere and cannot be undone.
+   */
+  it('gates power_control but not system_control', () => {
+    const { registry } = setup();
+
+    expect(registry.get('power_control')?.sideEffecting).toBe(true);
+    expect(registry.get('system_control')?.sideEffecting).toBe(false);
   });
 
   /**

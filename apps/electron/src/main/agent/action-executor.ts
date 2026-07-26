@@ -321,6 +321,27 @@ export class ActionExecutor {
       case 'brightness_down':
         await this.adjustBrightness(-10);
         break;
+      // Power actions. /t 0 means no delay; Windows prompts about unsaved work
+      // itself, and these reach the executor only after the user confirms.
+      case 'shutdown':
+      case 'shut_down':
+      case 'power_off':
+        await execAsync('shutdown /s /t 0');
+        break;
+      case 'restart':
+      case 'reboot':
+        await execAsync('shutdown /r /t 0');
+        break;
+      case 'sleep':
+        await execAsync(
+          'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; ' +
+            '[System.Windows.Forms.Application]::SetSuspendState(\'Suspend\',$false,$false)"'
+        );
+        break;
+      case 'sign_out':
+      case 'log_off':
+        await execAsync('shutdown /l');
+        break;
       default:
         throw new Error(`Unknown system control action: ${target}`);
     }

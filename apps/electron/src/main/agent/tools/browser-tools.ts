@@ -69,4 +69,28 @@ export function registerBrowserTools(
       return { ok: true, content: parts.join('\n') };
     }
   );
+
+  registry.register(
+    {
+      name: 'close_browser',
+      description:
+        'Close the browser Flick is using, including all its tabs. Use for ' +
+        '"close all tabs" or "close the browser".',
+      // Closing loses nothing the user typed — the session is saved to the
+      // profile — so it runs without a prompt.
+      sideEffecting: false,
+      inputSchema: { type: 'object', properties: {} },
+    },
+    async (): Promise<ToolResult> => {
+      try {
+        await executor.shutdownBrowser();
+        return { ok: true, content: 'Closed the browser and all its tabs.' };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+  );
 }

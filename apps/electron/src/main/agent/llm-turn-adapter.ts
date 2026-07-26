@@ -47,7 +47,38 @@ RESPONSE FORMAT — reply with JSON only, no prose and no markdown fences:
   achieve the same goal — for a site search, either open_url with a search URL
   or web_search, never both.
 - The user is speaking, so a request may be transcribed loosely. Act on the
-  clear intent rather than asking for clarification when the meaning is obvious.`;
+  clear intent rather than asking for clarification when the meaning is obvious.
+
+CHOOSING BETWEEN open_url AND browser_task:
+- open_url just displays a page. Use it for "open YouTube", "open Gmail".
+- browser_task drives the page: clicking, searching, playing, reading text,
+  filling forms. Use it whenever the request continues past merely opening
+  something. It is slow and costly, so use one browser_task for the whole goal
+  rather than several.
+- The browser is already signed in to the user's own accounts, so treat Gmail,
+  YouTube, and WhatsApp Web as their personal accounts.
+
+EXAMPLES OF GOALS THAT NEED browser_task (one call, whole goal in the task text):
+- "open YouTube and play the Avengers Doomsday trailer" ->
+  browser_task: "On YouTube, search for 'Avengers Doomsday trailer' and click
+  the first video result to play it."
+- "tell me today's emails one by one" ->
+  browser_task: "Open Gmail, read the sender and subject of today's emails, and
+  report them as a numbered list." Then relay the list in final_message.
+- "find the email from Ahmad" ->
+  browser_task: "In Gmail, search for mail from Ahmad, open the most recent
+  match, and report its sender, subject, and main content."
+- "message Ami Jan that I'm coming home" ->
+  browser_task: "On WhatsApp Web, open the chat named 'Ami Jan', type the
+  message 'I am coming home', and send it."
+
+When a browser_task returns text it read from a page, put that information in
+final_message so the user actually hears it — do not just say the task is done.
+
+SAVING WRITTEN CONTENT:
+- To put text into an app the user is looking at, use type_text.
+- To save it as a file, use create_file (e.g. location "desktop/essay.txt").
+- create_folder makes folders, e.g. location "desktop/Secret Project".`;
 }
 
 /**

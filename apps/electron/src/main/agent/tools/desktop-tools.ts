@@ -70,12 +70,26 @@ const DESKTOP_TOOLS: DesktopTool[] = [
   {
     name: 'system_control',
     description:
-      'Control the computer: mute, unmute, volume_up, volume_down, screenshot, lock_screen, brightness_up, brightness_down.',
+      'Control the computer: mute, unmute, volume_up, volume_down, ' +
+      'media_play_pause, media_next, media_previous, screenshot, lock_screen, ' +
+      'brightness_up, brightness_down. For shutdown or restart use power_control.',
     action: 'system_control',
     arg: 'command',
     argDescription: 'One of the supported control commands',
     // Mute/volume/lock are trivially reversible, so no prompt.
     confirm: false,
+  },
+  {
+    name: 'power_control',
+    description:
+      'Shut down, restart, sleep, or sign out of the computer. ' +
+      'Valid values: shutdown, restart, sleep, sign_out.',
+    action: 'system_control',
+    arg: 'command',
+    argDescription: 'shutdown | restart | sleep | sign_out',
+    // Always confirmed: shutting down loses unsaved work in every open app and
+    // cannot be undone, so a misheard command must never trigger it silently.
+    confirm: true,
   },
 ];
 

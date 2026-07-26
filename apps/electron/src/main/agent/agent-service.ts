@@ -7,6 +7,7 @@ import { ToolRegistry } from './tools/tool-registry';
 import { PermissionGate } from './tools/permission-gate';
 import { registerDesktopTools } from './tools/desktop-tools';
 import { registerBrowserTools } from './tools/browser-tools';
+import { registerFileTools } from './tools/file-tools';
 import { ToolLoop } from './tool-loop';
 import { createLlmTurnFn } from './llm-turn-adapter';
 import { ConfirmBridge, type PendingConfirm } from './confirm-bridge';
@@ -74,6 +75,7 @@ export class AgentService {
     this.toolRegistry = new ToolRegistry();
     registerDesktopTools(this.toolRegistry, this.actionExecutor);
     registerBrowserTools(this.toolRegistry, this.actionExecutor);
+    registerFileTools(this.toolRegistry);
 
     // Risky tools prompt the user through the renderer. With no notifier
     // support the send returns false and the gate fails closed, so a missing

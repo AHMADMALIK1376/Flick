@@ -89,7 +89,13 @@ describe('AgentService', () => {
     expect(service.getToolNames()).toContain('browser_task');
   });
 
-  it('exposes the six desktop tools plus the browser tool', () => {
-    expect(service.getToolNames()).toHaveLength(7);
+  it('exposes desktop, browser, and file tools', () => {
+    const names = service.getToolNames();
+    // 7 desktop + browser_task + close_browser + create_folder + create_file
+    expect(names).toHaveLength(11);
+    expect(names).toContain('create_folder');
+    expect(names).toContain('create_file');
+    expect(names).toContain('power_control');
+    expect(names).toContain('close_browser');
   });
 });
