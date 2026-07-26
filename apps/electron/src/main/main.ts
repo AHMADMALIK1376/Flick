@@ -87,7 +87,15 @@ process.on('unhandledRejection', (reason) => {
     // otherwise keeps under %LOCALAPPDATA% on the system drive — that was
     // ~100MB left on C: even after userData moved. Point it at the same place.
     app.setPath('sessionData', dir);
-    safeLog(`[Startup] userData and sessionData relocated to ${dir}`);
+    // Transcription writes a scratch .wav per command. os.tmpdir() follows this
+    // path, so redirecting it keeps those off the system drive too.
+    const tempDir = path.join(dir, 'temp');
+    fs.mkdirSync(tempDir, { recursive: true });
+    app.setPath('temp', tempDir);
+    process.env.TMPDIR = tempDir;
+    process.env.TEMP = tempDir;
+    process.env.TMP = tempDir;
+    safeLog(`[Startup] userData, sessionData and temp relocated to ${dir}`);
   } catch (err) {
     safeError('[Startup] could not relocate userData, using default:', err);
   }
