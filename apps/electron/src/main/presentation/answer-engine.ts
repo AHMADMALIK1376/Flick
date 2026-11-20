@@ -1,12 +1,14 @@
-import type { AnswerOrigin, Deck, WebSourceRef } from '../../shared/types';
+import type { AnswerOrigin, Deck, Slide, WebSourceRef } from '../../shared/types';
 import type { LLMResult, SearchResult } from '../llm/providers/llm-provider';
 import { findBestMatch } from './question-matcher';
 import {
+  EXPLAIN_SLIDE_SYSTEM_PROMPT,
   LIVE_GENERAL_SYSTEM_PROMPT,
   LIVE_SEARCH_SYSTEM_PROMPT,
   LIVE_SLIDES_SYSTEM_PROMPT,
   LIVE_WEB_RESULTS_SYSTEM_PROMPT,
   RecentExchange,
+  explainUserMessage,
   liveUserMessage,
 } from './prompts';
 import { SearchOutcome, formatResults } from './web-search';
@@ -48,6 +50,8 @@ export interface EngineAnswer {
 const ANSWER_MAX_TOKENS = 700;
 const MAX_SEARCHES = 3;
 const SOURCES_SHOWN = 3;
+/** A minute of speech is ~200 words; this leaves room without letting it run on. */
+const EXPLAIN_MAX_TOKENS = 900;
 
 /**
  * Answers one live question by working down a cascade, fastest first:
@@ -132,6 +136,39 @@ export class AnswerEngine {
     if (!result.ok) throw new AnswerError(result.error.message, result.error.kind);
     return { answer: result.text.trim(), origin: 'general', sources: [] };
   }
+}
+
+export interface ExplainRequest {
+  deck: Deck;
+  slideNumber: number;
+  /** What the presenter said, so the explanation follows its language and any focus asked for. */
+  request: string;
+}
+
+/**
+ * Explains one slide to the audience, with examples. Uses the slide and its
+ * neighbours only: no web search, because the explanation must stay true to
+ * what the presenter is showing.
+ */
+export async function explainSlide(llm: AnswerLLM, req: ExplainRequest): Promise<string> {
+  const at = (n: number): Slide | undefined => req.deck.slides.find((s) => s.number === n);
+  const slide = at(req.slideNumber);
+  if (!slide) throw new AnswerError(`This presentation has ${req.deck.slides.length} slides.`, 'no_slide');
+
+  const result = await llm.textComplete(
+    EXPLAIN_SLIDE_SYSTEM_PROMPT,
+    explainUserMessage({
+      deckName: req.deck.name,
+      slide,
+      previous: at(req.slideNumber - 1),
+      next: at(req.slideNumber + 1),
+      request: req.request,
+    }),
+    false,
+    EXPLAIN_MAX_TOKENS,
+  );
+  if (!result.ok) throw new AnswerError(result.error.message, result.error.kind);
+  return result.text.trim();
 }
 
 export class AnswerError extends Error {

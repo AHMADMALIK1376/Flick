@@ -29,6 +29,8 @@ export enum IpcChannel {
   DECK_PREP_PROGRESS = 'deck-prep-progress',
   /** A question, typed or spoken. Returns the answer. */
   ASK = 'ask',
+  /** Explain a slide to the audience: the one on screen, or a given number. */
+  EXPLAIN_SLIDE = 'explain-slide',
   /** Main → renderers: a new answer is ready (dashboard log + answer card). */
   ANSWER = 'answer',
   /** Main → answer card: Flick is working on a question. */

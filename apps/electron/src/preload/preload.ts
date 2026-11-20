@@ -100,6 +100,10 @@ const electronAPI = {
   ask(text: string): Promise<AnswerPayload | null> {
     return ipcRenderer.invoke(IpcChannel.ASK, text);
   },
+  /** Explain the slide on screen (or slide `slideNumber`) to the audience. */
+  explainSlide(slideNumber?: number): Promise<AnswerPayload> {
+    return ipcRenderer.invoke(IpcChannel.EXPLAIN_SLIDE, slideNumber);
+  },
   onThinking(callback: (question: string) => void): void {
     ipcRenderer.on(IpcChannel.THINKING, (_event, question) => callback(question));
   },

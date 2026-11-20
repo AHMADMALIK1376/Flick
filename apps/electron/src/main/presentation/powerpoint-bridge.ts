@@ -78,13 +78,17 @@ export class PowerPointBridge {
     if (this.supported && !this.inFlight) void this.readCurrentSlide();
   }
 
-  /** The slide on screen, from a recent read when there is one. */
-  async currentSlide(): Promise<number | null> {
+  /**
+   * The slide on screen, from a recent read when there is one. `fresh` skips
+   * the cache: explaining "this slide" must use the slide showing right now,
+   * not one from fifteen seconds ago.
+   */
+  async currentSlide(opts: { fresh?: boolean } = {}): Promise<number | null> {
     if (!this.supported) return null;
     // A read already under way (prefetched when recording started) is fresher
     // than any cached value.
     if (this.inFlight) return this.inFlight;
-    if (this.cached && this.now() - this.cached.at < SLIDE_CACHE_MS) return this.cached.slide;
+    if (!opts.fresh && this.cached && this.now() - this.cached.at < SLIDE_CACHE_MS) return this.cached.slide;
     return this.readCurrentSlide();
   }
 

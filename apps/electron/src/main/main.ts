@@ -183,6 +183,7 @@ const settingsStore = new Store<Settings>({
     llmProvider: 'anthropic',
     llmModel: 'claude-haiku-5-5',
     answerMode: 'speak',
+    explainHotkey: process.platform === 'darwin' ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
   },
 });
 
@@ -457,6 +458,25 @@ function registerGlobalHotkey(accelerator: string): void {
   } else {
     setupToggleHotkey(accelerator);
   }
+  registerExplainHotkey(settingsStore.get('explainHotkey'));
+}
+
+/** One key press: Flick explains the slide on screen to the audience. */
+function registerExplainHotkey(accelerator: string | undefined): void {
+  if (!accelerator) return;
+  try {
+    let last = 0;
+    const ok = globalShortcut.register(accelerator, () => {
+      const now = Date.now();
+      if (now - last < 1000) return;
+      last = now;
+      send(widgetWindow, IpcChannel.STOP_SPEAKING);
+      void presentation.explainSlide();
+    });
+    if (!ok) console.warn(`Failed to register explain-slide hotkey: ${accelerator}`);
+  } catch (err) {
+    console.warn(`Error registering explain-slide hotkey: ${err}`);
+  }
 }
 
 function setupToggleHotkey(accelerator: string): void {
@@ -548,7 +568,7 @@ function setupIPC(): void {
     for (const [key, value] of Object.entries(partial)) {
       settingsStore.set(key as keyof Settings, value);
     }
-    if (partial.hotkeyAccelerator || partial.hotkeyMode) {
+    if (partial.hotkeyAccelerator || partial.hotkeyMode || partial.explainHotkey) {
       registerGlobalHotkey(settingsStore.get('hotkeyAccelerator'));
     }
     if ('showFloatingWidget' in partial && widgetWindow && !widgetWindow.isDestroyed()) {
@@ -619,6 +639,13 @@ function setupIPC(): void {
   // ── Presentation ───────────────────────────────────────────────────────────
 
   ipcMain.handle(IpcChannel.ASK, (_event, text: string) => presentation.ask(String(text ?? '')));
+
+  ipcMain.handle(IpcChannel.EXPLAIN_SLIDE, (_event, slideNumber?: number) => {
+    send(widgetWindow, IpcChannel.STOP_SPEAKING);
+    return Number.isInteger(slideNumber) && (slideNumber as number) > 0
+      ? presentation.explainSlide({ kind: 'number', number: slideNumber as number })
+      : presentation.explainSlide();
+  });
 
   ipcMain.handle(IpcChannel.DECK_UPLOAD, async () => {
     const options: Electron.OpenDialogOptions = {

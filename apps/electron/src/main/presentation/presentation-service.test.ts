@@ -217,3 +217,109 @@ describe('AnthropicProvider.parseSearchResponse', () => {
     expect(direct).toEqual({ ok: true, text: 'From slides.', sources: [], searched: false });
   });
 });
+
+describe('Explain this slide', () => {
+  async function deckOf(slides: number) {
+    const zip = new JSZip();
+    zip.file(
+      'ppt/presentation.xml',
+      '<p:presentation><p:sldIdLst>' +
+        Array.from({ length: slides }, (_, i) => `<p:sldId r:id="rId${i + 1}"/>`).join('') +
+        '</p:sldIdLst></p:presentation>',
+    );
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      '<Relationships>' +
+        Array.from({ length: slides }, (_, i) => `<Relationship Id="rId${i + 1}" Target="slides/slide${i + 1}.xml"/>`).join('') +
+        '</Relationships>',
+    );
+    for (let i = 1; i <= slides; i++) {
+      zip.file(
+        `ppt/slides/slide${i}.xml`,
+        `<p:sld><p:sp><p:nvPr><p:ph type="title"/></p:nvPr><a:p><a:r><a:t>Topic ${i}</a:t></a:r></a:p></p:sp></p:sld>`,
+      );
+    }
+    return zip.generateAsync({ type: 'nodebuffer' });
+  }
+
+  function setupExplain(opts: { onScreen?: string; platform?: NodeJS.Platform; answerMode?: 'speak' | 'private' } = {}) {
+    const llm = {
+      supportsNativeSearch: () => true,
+      textComplete: vi.fn(async () => ({ ok: true as const, text: 'EXPLANATION' })),
+      webSearchComplete: vi.fn(async () => ({ ok: true as const, text: 'ANSWER', sources: [], searched: false })),
+    };
+    const notifier = { onThinking: vi.fn(), onAnswer: vi.fn(), onPrepProgress: vi.fn() };
+    const run = vi.fn(async () => opts.onScreen ?? '');
+    const pptx = deckOf(5);
+    const service = new PresentationService({
+      llm,
+      decks: memoryStore<DeckData>({ decks: [], activeDeckId: null }),
+      log: memoryStore<LogData>({ entries: [] }),
+      bridge: new PowerPointBridge(run, opts.platform ?? 'win32'),
+      notifier,
+      settings: () => ({ answerMode: opts.answerMode ?? 'private', tavilyApiKey: '' }),
+      readFile: async () => pptx,
+    });
+    return { service, llm, notifier, run };
+  }
+
+  it('explains the slide on screen when asked by voice, and always speaks it', async () => {
+    const { service, llm, notifier } = setupExplain({ onScreen: '3', answerMode: 'private' });
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+
+    const a = await service.ask('Flick, explain this slide to the audience');
+    expect(a).toMatchObject({ origin: 'explain', answer: 'EXPLANATION', currentSlide: 3, speak: true });
+    expect(a?.question).toBe('Explain slide 3: Topic 3');
+    expect(notifier.onThinking).toHaveBeenCalledWith('Explain slide 3: Topic 3');
+
+    const [system, message] = llm.textComplete.mock.calls[0] as unknown as [string, string];
+    expect(system).toMatch(/examples/);
+    expect(message).toContain('<slide_to_explain>\nSlide 3: Topic 3');
+    expect(message).toContain('previous slide 2: Topic 2');
+    expect(message).toContain('next slide 4: Topic 4');
+    expect(llm.webSearchComplete).not.toHaveBeenCalled();
+  });
+
+  it('reads the slide fresh, not from the cache', async () => {
+    const { service, run } = setupExplain({ onScreen: '2' });
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    await service.explainSlide();
+    await service.explainSlide();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('explains a numbered slide, and the next one', async () => {
+    const { service } = setupExplain({ onScreen: '2' });
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    expect((await service.ask('explain slide 5'))?.currentSlide).toBe(5);
+    expect((await service.ask('explain the next slide'))?.currentSlide).toBe(3);
+  });
+
+  it('says clearly when it cannot tell which slide, without speaking', async () => {
+    const { service } = setupExplain({ onScreen: '' });
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    const a = await service.ask('explain this slide');
+    expect(a).toMatchObject({ origin: 'error', speak: false });
+    expect(a?.answer).toMatch(/slideshow|explain slide 5/);
+
+    const mac = setupExplain({ platform: 'darwin' });
+    await mac.service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    expect((await mac.service.ask('explain this slide'))?.answer).toMatch(/Windows/);
+  });
+
+  it('refuses slides that do not exist, and needs a deck', async () => {
+    const { service } = setupExplain();
+    expect((await service.ask('explain slide 2'))?.answer).toMatch(/Load your presentation/);
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    expect((await service.ask('explain slide 9'))?.answer).toMatch(/has 5 slides/);
+  });
+
+  it('keeps explanations out of the follow-up context for questions', async () => {
+    const { service, llm } = setupExplain({ onScreen: '1' });
+    await service.loadDeckFromFile('/talks/AI.pptx', { prepare: false });
+    await service.explainSlide();
+    await service.ask('What is a GPU?');
+    const message = llm.webSearchComplete.mock.calls[0][1] as string;
+    expect(message).not.toContain('<recent_questions>');
+  });
+});

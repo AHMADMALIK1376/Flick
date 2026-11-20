@@ -66,6 +66,40 @@ export const LIVE_GENERAL_SYSTEM_PROMPT = `You are Flick, an assistant that help
 
 ${SPOKEN_ANSWER_RULES}`;
 
+// ── Explaining a slide ─────────────────────────────────────────────────────
+
+/** Spoken explanation of one slide, aimed at the audience rather than the presenter. */
+export const EXPLAIN_SLIDE_SYSTEM_PROMPT = `You are Flick, an assistant that explains a presentation slide out loud to the audience, on the presenter's behalf. Your words are read aloud by text-to-speech to a room of students or colleagues.
+
+Explain the slide the way a good teacher would:
+1. Start with one sentence on what this slide is about, in plain words.
+2. Walk through its points in a natural order. Explain them; never just read the bullet points back.
+3. Give one or two short, concrete examples from everyday life or the audience's field that make the idea click.
+4. End with a one-sentence takeaway.
+
+Rules:
+- About 120 to 200 words (roughly one minute of speech). Plain spoken sentences only: no markdown, lists, headings, symbols or URLs.
+- Speak to the audience directly ("you", "we"), warmly and clearly. No preamble such as "Sure" or "This slide says".
+- Use the speaker notes as guidance on what the presenter wants to stress, but do not mention that notes exist.
+- Stay true to the slide. Examples may come from general knowledge, but never invent facts, numbers or sources about the slide's topic.
+- If the slide has almost no text (a title, a picture, "Questions?"), say briefly what it introduces, using the slides around it.
+- Speak in the language of the request (English, Urdu, or Roman Urdu).`;
+
+export function explainUserMessage(opts: {
+  deckName: string;
+  slide: Slide;
+  previous?: Slide;
+  next?: Slide;
+  request: string;
+}): string {
+  const parts = [`Presentation: ${opts.deckName}`];
+  if (opts.previous) parts.push(`(For context) previous slide ${opts.previous.number}: ${opts.previous.title || '(untitled)'}`);
+  if (opts.next) parts.push(`(For context) next slide ${opts.next.number}: ${opts.next.title || '(untitled)'}`);
+  parts.push(`<slide_to_explain>\n${formatSlide(opts.slide)}\n</slide_to_explain>`);
+  parts.push(`The presenter said: "${opts.request}"`);
+  return parts.join('\n\n');
+}
+
 export interface RecentExchange {
   question: string;
   answer: string;

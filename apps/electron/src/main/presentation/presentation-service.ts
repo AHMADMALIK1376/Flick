@@ -7,11 +7,12 @@ import type {
   DeckSummary,
   PrepProgress,
 } from '../../shared/types';
-import { AnswerEngine, AnswerError, AnswerLLM, WebSearchFn } from './answer-engine';
+import { AnswerEngine, AnswerError, AnswerLLM, WebSearchFn, explainSlide } from './answer-engine';
 import { PowerPointBridge } from './powerpoint-bridge';
 import { parsePptx } from './pptx-parser';
 import { PrepLLM, predictQuestions } from './qa-predictor';
 import { cleanQuestion, isBareAddress, isNothingHeard } from './question-text';
+import { SlideTarget, parseSlideCommand } from './slide-command';
 import { tavilySearch } from './web-search';
 
 /** Minimal key-value persistence — electron-store satisfies it. */
@@ -239,6 +240,11 @@ export class PresentationService {
     }
 
     const question = cleanQuestion(raw);
+
+    // "Flick, explain this slide" is a request to present, not a question.
+    const command = parseSlideCommand(question);
+    if (command) return this.explainSlide(command, question);
+
     this.deps.notifier.onThinking(question);
 
     const deck = this.getActiveDeck();
@@ -280,6 +286,79 @@ export class PresentationService {
     return payload;
   }
 
+  /**
+   * Explains a slide to the audience, with examples, and always speaks it:
+   * the presenter asked Flick to talk to the room, whatever the answer mode.
+   */
+  async explainSlide(
+    target: SlideTarget = { kind: 'current' },
+    request = 'Explain this slide to the audience.',
+  ): Promise<AnswerPayload> {
+    const started = Date.now();
+    const deck = this.getActiveDeck();
+    const base = { id: uuidv4(), timestamp: started, sources: [], origin: 'explain' as const };
+    const fail = (message: string, slide: number | null, label = request): AnswerPayload => {
+      const payload: AnswerPayload = {
+        ...base,
+        question: label,
+        answer: message,
+        origin: 'error',
+        currentSlide: slide,
+        durationMs: Date.now() - started,
+        speak: false,
+      };
+      this.appendLog(payload);
+      this.deps.notifier.onAnswer(payload);
+      return payload;
+    };
+
+    if (!deck) {
+      return fail('Load your presentation first, so I know what is on the slides.', null);
+    }
+
+    let slideNumber: number | null;
+    if (target.kind === 'number') {
+      slideNumber = target.number;
+    } else {
+      const onScreen = await this.deps.bridge.currentSlide({ fresh: true });
+      slideNumber = onScreen === null ? null : onScreen + (target.kind === 'relative' ? target.offset : 0);
+    }
+    if (slideNumber === null) {
+      return fail(
+        this.deps.bridge.supported
+          ? "I can't see which slide is on screen. Start the slideshow in PowerPoint, or say \"explain slide 5\"."
+          : 'I can only see the current slide in PowerPoint on Windows. Say "explain slide 5" instead.',
+        null,
+      );
+    }
+
+    const slide = deck.slides.find((s) => s.number === slideNumber);
+    const label = slide ? `Explain slide ${slideNumber}: ${slide.title || 'untitled'}` : `Explain slide ${slideNumber}`;
+    if (!slide) {
+      return fail(`This presentation has ${deck.slides.length} slides, so there is no slide ${slideNumber}.`, slideNumber, label);
+    }
+
+    this.deps.notifier.onThinking(label);
+    let payload: AnswerPayload;
+    try {
+      const text = await explainSlide(this.deps.llm, { deck, slideNumber, request });
+      payload = {
+        ...base,
+        question: label,
+        answer: text,
+        currentSlide: slideNumber,
+        durationMs: Date.now() - started,
+        speak: true,
+      };
+    } catch (err) {
+      return fail(friendlyError(err), slideNumber, label);
+    }
+
+    this.appendLog(payload);
+    this.deps.notifier.onAnswer(payload);
+    return payload;
+  }
+
   getLog(): AnswerPayload[] {
     return [...this.deps.log.get('entries')].reverse();
   }
@@ -299,7 +378,7 @@ export class PresentationService {
     const cutoff = Date.now() - RECENT_WINDOW_MS;
     return this.deps.log
       .get('entries')
-      .filter((e) => e.timestamp >= cutoff && e.origin !== 'error' && e.origin !== 'greeting')
+      .filter((e) => e.timestamp >= cutoff && !['error', 'greeting', 'explain'].includes(e.origin))
       .slice(-RECENT_FOR_CONTEXT)
       .map((e) => ({ question: e.question, answer: e.answer }));
   }

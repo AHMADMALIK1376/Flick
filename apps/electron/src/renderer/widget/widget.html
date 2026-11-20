@@ -254,26 +254,45 @@ ipc2.on('stop-recording', () => {
 // Flick speaks. The widget window is always alive, so it is the reliable place
 // to run speech synthesis. Uses the OS voice via the Web Speech API — offline,
 // no dependency, no API key.
+function pickVoice(text) {
+  var voices = window.speechSynthesis.getVoices();
+  // Answers in Urdu script need an Urdu voice, when Windows has one installed.
+  if (/[\u0600-\u06FF]/.test(text)) {
+    var ur = voices.find(function (v) { return /^ur/i.test(v.lang); });
+    if (ur) return ur;
+  }
+  // Otherwise prefer a female English voice to match Flick's persona.
+  return voices.find(function (v) {
+    return /en/i.test(v.lang) && /female|zira|aria|jenny|hazel/i.test(v.name);
+  }) || voices.find(function (v) { return /en/i.test(v.lang); }) || null;
+}
+
+// Long text (a slide explanation runs about a minute) is queued sentence by
+// sentence: Chromium can cut a single long utterance off part-way.
+function speechChunks(text) {
+  var sentences = String(text).match(/[^.!?\u061F\u06D4]+[.!?\u061F\u06D4]*\s*/g) || [String(text)];
+  var chunks = [], current = '';
+  sentences.forEach(function (s) {
+    if ((current + s).length > 220 && current) { chunks.push(current); current = ''; }
+    current += s;
+  });
+  if (current.trim()) chunks.push(current);
+  return chunks;
+}
+
 function flickSpeak(text) {
   try {
     if (!text || !window.speechSynthesis) return;
     // Cancel anything mid-sentence so replies do not pile up.
     window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(String(text));
-    u.rate = 1.0;
-    u.pitch = 1.0;
-    var voices = window.speechSynthesis.getVoices();
-    // Answers in Urdu script need an Urdu voice, when Windows has one installed.
-    var urdu = /[\u0600-\u06FF]/.test(text);
-    var preferred = urdu
-      ? voices.find(function (v) { return /^ur/i.test(v.lang); })
-      : null;
-    // Otherwise prefer a female English voice to match Flick's persona.
-    preferred = preferred || voices.find(function (v) {
-      return /en/i.test(v.lang) && /female|zira|aria|jenny|hazel/i.test(v.name);
-    }) || voices.find(function (v) { return /en/i.test(v.lang); });
-    if (preferred) u.voice = preferred;
-    window.speechSynthesis.speak(u);
+    var voice = pickVoice(text);
+    speechChunks(text).forEach(function (chunk) {
+      var u = new SpeechSynthesisUtterance(chunk.trim());
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      if (voice) u.voice = voice;
+      window.speechSynthesis.speak(u);
+    });
   } catch (e) {
     // Speech is a nicety; never let it break the widget.
   }

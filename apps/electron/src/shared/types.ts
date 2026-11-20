@@ -32,6 +32,8 @@ export interface Settings {
    * answer in their own words (there is still a Speak button on the card).
    */
   answerMode: 'speak' | 'private';
+  /** Global shortcut that makes Flick explain the slide on screen, without speaking a command. */
+  explainHotkey: string;
 }
 
 export interface TranscriptionResult {
@@ -146,6 +148,7 @@ export type AnswerOrigin =
   | 'slides' // answered from the deck's content
   | 'web' // the deck did not cover it, so Flick searched the web
   | 'general' // no deck coverage and no web search available
+  | 'explain' // the presenter asked Flick to explain a slide to the audience
   | 'greeting'
   | 'error';
 
