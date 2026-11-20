@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <title>Flick — Answer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: transparent; overflow: hidden; }
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #f4f4f7;
+      padding: 6px;
+    }
+    .card {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: rgba(14, 14, 22, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    .name { font-size: 13px; font-weight: 600; letter-spacing: -0.2px; }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.7);
+    }
+    .badge.prepared { background: rgba(34, 197, 94, 0.14); color: #4ade80; }
+    .badge.slides { background: rgba(99, 102, 241, 0.16); color: #a5b4fc; }
+    .badge.web { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .badge.error { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    .spacer { flex: 1; }
+    .icon-btn {
+      -webkit-app-region: no-drag;
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 6px;
+    }
+    .icon-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+    .body { flex: 1; overflow-y: auto; padding: 12px 14px 4px; }
+    .question { font-size: 12.5px; color: rgba(255, 255, 255, 0.55); margin-bottom: 8px; line-height: 1.45; }
+    .question b { color: rgba(255, 255, 255, 0.75); font-weight: 600; }
+    .answer { font-size: 15.5px; line-height: 1.55; white-space: pre-wrap; }
+    .sources { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+    .sources a {
+      font-size: 12px;
+      color: #93c5fd;
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .sources a:hover { text-decoration: underline; }
+    .foot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px 10px;
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.4);
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 12px;
+      padding: 5px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.14); }
+    .thinking { display: flex; align-items: center; gap: 10px; font-size: 14px; color: rgba(255, 255, 255, 0.75); }
+    .spin {
+      width: 16px; height: 16px; flex-shrink: 0;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      border-top-color: #a5b4fc;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <span class="name">Flick</span>
+      <span class="badge hidden" id="badge"></span>
+      <span class="spacer"></span>
+      <button class="icon-btn" title="Hide" id="close">✕</button>
+    </div>
+    <div class="body" id="body">
+      <div class="thinking hidden" id="thinking"><div class="spin"></div><span>Finding the answer…</span></div>
+      <div class="question" id="question">Press <b>Ctrl+Shift+Space</b> and ask a question.</div>
+      <div class="answer" id="answer"></div>
+      <div class="sources" id="sources"></div>
+    </div>
+    <div class="foot">
+      <span id="meta"></span>
+      <span class="spacer"></span>
+      <button class="btn hidden" id="speak">🔊 Speak</button>
+      <button class="btn hidden" id="stop">Stop</button>
+    </div>
+  </div>
+
+  <script>
+    var api = window.electronAPI;
+    var current = null;
+
+    var LABELS = {
+      prepared: 'Prepared answer',
+      slides: 'From your slides',
+      web: 'From the web',
+      general: 'General knowledge',
+      greeting: 'Listening',
+      error: 'Problem'
+    };
+
+    function $(id) { return document.getElementById(id); }
+    function show(el, on) { el.classList.toggle('hidden', !on); }
+
+    function setQuestion(text) {
+      var q = $('question');
+      q.textContent = '';
+      var b = document.createElement('b');
+      b.textContent = 'Q: ';
+      q.appendChild(b);
+      q.appendChild(document.createTextNode(text));
+    }
+
+    api.onThinking(function (question) {
+      current = null;
+      setQuestion(question);
+      show($('thinking'), true);
+      show($('badge'), false);
+      $('answer').textContent = '';
+      $('sources').innerHTML = '';
+      $('meta').textContent = '';
+      show($('speak'), false);
+      show($('stop'), false);
+    });
+
+    api.onAnswer(function (a) {
+      current = a;
+      show($('thinking'), false);
+      setQuestion(a.question);
+      $('answer').textContent = a.answer;
+
+      var badge = $('badge');
+      badge.className = 'badge ' + a.origin;
+      badge.textContent = LABELS[a.origin] || a.origin;
+
+      var sources = $('sources');
+      sources.innerHTML = '';
+      (a.sources || []).forEach(function (s) {
+        var link = document.createElement('a');
+        link.textContent = '↗ ' + (s.title || s.url);
+        link.title = s.url;
+        link.addEventListener('click', function () { api.openExternal(s.url); });
+        sources.appendChild(link);
+      });
+
+      var meta = [];
+      if (a.durationMs) meta.push((a.durationMs / 1000).toFixed(1) + 's');
+      if (a.currentSlide) meta.push('slide ' + a.currentSlide);
+      $('meta').textContent = meta.join(' · ');
+
+      var speakable = a.origin !== 'error' && a.origin !== 'greeting';
+      show($('speak'), speakable);
+      show($('stop'), speakable);
+      $('body').scrollTop = 0;
+    });
+
+    $('speak').addEventListener('click', function () { if (current) api.speak(current.answer); });
+    $('stop').addEventListener('click', function () { api.stopSpeaking(); });
+    $('close').addEventListener('click', function () { api.stopSpeaking(); api.hideAnswerCard(); });
+  </script>
+</body>
+</html>

@@ -1,15 +1,9 @@
 export enum IpcChannel {
   TRANSCRIBE = 'transcribe',
-  TRANSCRIPTION_COMPLETE = 'transcription-complete',
   TRANSCRIPTION_STATUS = 'transcription-status',
   TOGGLE_RECORDING = 'toggle-recording',
   GET_SETTINGS = 'get-settings',
   UPDATE_SETTINGS = 'update-settings',
-  GET_HISTORY = 'get-history',
-  CLEAR_HISTORY = 'clear-history',
-  DELETE_HISTORY_ENTRY = 'delete-history-entry',
-  UPDATE_HISTORY_ENTRY = 'update-history-entry',
-  COPY_TO_CLIPBOARD = 'copy-to-clipboard',
   DOWNLOAD_MODEL = 'download-model',
   DOWNLOAD_PROGRESS = 'download-progress',
   WIDGET_POSITION_SAVE = 'widget-position-save',
@@ -19,22 +13,31 @@ export enum IpcChannel {
   OPEN_SETTINGS = 'open-settings',
   SHOW_DASHBOARD = 'show-dashboard',
   QUIT_APP = 'quit-app',
-  AGENT_GET_LOG = 'agent-get-log',
-  AGENT_CLEAR_LOG = 'agent-clear-log',
-  AGENT_TOAST = 'agent-toast',
-  AGENT_ACTION_RESULT = 'agent-action-result',
-  BROWSER_TASK_PROGRESS = 'browser-task-progress',
-  BROWSER_TASK_CANCEL = 'browser-task-cancel',
-  BROWSER_TASK_RESULT = 'browser-task-result',
-  BROWSER_TASK_LOGIN_REQUIRED = 'browser-task-login-required',
-  BROWSER_TASK_LOGIN_COMPLETE = 'browser-task-login-complete',
-  CHAT_SEND = 'chat-send',
-  CHAT_RESPONSE = 'chat-response',
-  AGENT_CONFIRM_REQUEST = 'agent-confirm-request',
-  AGENT_CONFIRM_RESPONSE = 'agent-confirm-response',
-  AGENT_SPEAK = 'agent-speak',
-  CONNECTORS_LIST = 'connectors-list',
-  CONNECTOR_OPEN_LOGIN = 'connector-open-login',
-  CONNECTOR_MARK_CONNECTED = 'connector-mark-connected',
-  CONNECTOR_DISCONNECT = 'connector-disconnect',
+  TOAST = 'toast',
+
+  // ── Presentation ──
+  /** Pick a .pptx with a file dialog and load it as the active deck. */
+  DECK_UPLOAD = 'deck-upload',
+  /** Load the presentation currently open in PowerPoint (Windows). */
+  DECK_LOAD_FROM_POWERPOINT = 'deck-load-from-powerpoint',
+  DECK_LIST = 'deck-list',
+  DECK_GET = 'deck-get',
+  DECK_ACTIVATE = 'deck-activate',
+  DECK_DELETE = 'deck-delete',
+  /** Re-run question prediction for a deck. */
+  DECK_PREPARE = 'deck-prepare',
+  DECK_PREP_PROGRESS = 'deck-prep-progress',
+  /** A question, typed or spoken. Returns the answer. */
+  ASK = 'ask',
+  /** Main → renderers: a new answer is ready (dashboard log + answer card). */
+  ANSWER = 'answer',
+  /** Main → answer card: Flick is working on a question. */
+  THINKING = 'thinking',
+  QA_LOG_GET = 'qa-log-get',
+  QA_LOG_CLEAR = 'qa-log-clear',
+  /** Read text aloud from the widget. */
+  SPEAK = 'speak',
+  STOP_SPEAKING = 'stop-speaking',
+  ANSWER_CARD_HIDE = 'answer-card-hide',
+  OPEN_EXTERNAL = 'open-external',
 }

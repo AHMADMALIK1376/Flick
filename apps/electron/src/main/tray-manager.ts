@@ -11,7 +11,7 @@ export class TrayManager {
   ): Tray {
     const icon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
     this.tray = new Tray(icon);
-    this.tray.setToolTip('Voice to Text');
+    this.tray.setToolTip('Flick');
 
     this.onDashboard = callbacks.onDashboard;
     this.onQuit = callbacks.onQuit;
