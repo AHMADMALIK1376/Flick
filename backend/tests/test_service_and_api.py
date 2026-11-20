@@ -125,7 +125,7 @@ def client(db):
 
 
 def test_token_required(client):
-    assert client.get("/health").status_code == 200
+    assert client.get("/health").headers["content-type"] == "application/json; charset=utf-8"
     assert client.get("/settings").status_code == 401
     assert client.get("/settings", headers={"X-Flick-Token": "wrong"}).status_code == 401
 

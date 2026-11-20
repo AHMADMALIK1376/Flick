@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import __version__
@@ -26,6 +27,12 @@ from .text import SlideTarget
 
 #: Largest .pptx accepted by upload.
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+
+class UTF8JSONResponse(JSONResponse):
+    # Say UTF-8 explicitly: Windows PowerShell 5.1 otherwise decodes JSON as
+    # Latin-1 and shows "–" in "SafeQuery – Project.pptx" as "â".
+    media_type = "application/json; charset=utf-8"
 
 
 class AskRequest(BaseModel):
@@ -53,7 +60,7 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             on_ready()
         yield
 
-    app = FastAPI(title="Flick backend", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Flick backend", version=__version__, lifespan=lifespan, default_response_class=UTF8JSONResponse)
     # Renderer pages load from file:// (origin "null") or the Vite dev server.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
