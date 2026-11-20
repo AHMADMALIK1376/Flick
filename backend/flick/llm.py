@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Protocol
+from typing import Awaitable, Callable, Optional, Protocol, Union
 
 import anthropic
 
@@ -17,6 +17,39 @@ MAX_PAUSE_CONTINUATIONS = 3
 #: Sources shown when the model cites nothing explicitly.
 FALLBACK_SOURCE_COUNT = 3
 REQUEST_TIMEOUT_S = 60.0
+
+
+#: A user message: plain text, or content blocks (so part of it can be cached).
+Message = Union[str, list[dict]]
+#: Called with each complete sentence as the answer is written.
+OnText = Callable[[str], Awaitable[None]]
+#: Called when Claude starts searching the web.
+OnSearch = Callable[[], Awaitable[None]]
+
+#: Sentence ends: Latin, Urdu (۔) and Arabic (؟) punctuation.
+_SENTENCE_END = re.compile(r"(?<=[.!?\u06D4\u061F])\s+")
+
+
+class SentenceStream:
+    """Collects streamed text and hands it on one complete sentence at a time,
+    so speech can start after the first sentence instead of the whole answer."""
+
+    def __init__(self, on_sentence: OnText):
+        self._on_sentence = on_sentence
+        self._buffer = ""
+
+    async def feed(self, text: str) -> None:
+        self._buffer += text
+        parts = _SENTENCE_END.split(self._buffer)
+        self._buffer = parts.pop()  # the unfinished sentence
+        for sentence in parts:
+            if sentence.strip():
+                await self._on_sentence(sentence.strip())
+
+    async def flush(self) -> None:
+        rest, self._buffer = self._buffer.strip(), ""
+        if rest:
+            await self._on_sentence(rest)
 
 
 class LLMError(Exception):
@@ -35,10 +68,18 @@ class SearchResult:
 
 
 class LLM(Protocol):
-    async def complete(self, system: str, message: str, max_tokens: int = 700) -> str: ...
+    async def complete(self, system: str, message: Message, max_tokens: int = 700) -> str: ...
 
     async def search_complete(
-        self, system: str, message: str, max_tokens: int = 700, max_searches: int = 3
+        self, system: str, message: Message, max_tokens: int = 700, max_searches: int = 3
+    ) -> SearchResult: ...
+
+    async def stream_complete(
+        self, system: str, message: Message, max_tokens: int, on_text: OnText
+    ) -> str: ...
+
+    async def stream_search(
+        self, system: str, message: Message, max_tokens: int, max_searches: int, on_text: OnText, on_search: OnSearch
     ) -> SearchResult: ...
 
 
@@ -61,7 +102,14 @@ class Claude:
             self._client_key = key
         return self._client
 
-    async def complete(self, system: str, message: str, max_tokens: int = 700) -> str:
+    async def warm_up(self) -> None:
+        """Opens the HTTPS connection before the first question (a free call)."""
+        try:
+            await self._client_for_key().models.list(limit=1)
+        except Exception:
+            pass  # no key yet, offline: the first real question will say so
+
+    async def complete(self, system: str, message: Message, max_tokens: int = 700) -> str:
         client = self._client_for_key()
         try:
             response = await client.messages.create(
@@ -77,8 +125,76 @@ class Claude:
             raise LLMError("empty_response", "Claude returned an empty answer.")
         return text
 
+    async def stream_complete(self, system: str, message: Message, max_tokens: int, on_text: OnText) -> str:
+        """Like `complete`, but hands each sentence to `on_text` as soon as it is written."""
+        client = self._client_for_key()
+        sentences = SentenceStream(on_text)
+        try:
+            async with client.messages.stream(
+                model=self._get_model(),
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": message}],
+            ) as stream:
+                async for event in stream:
+                    if event.type == "text":
+                        await sentences.feed(event.text)
+                final = await stream.get_final_message()
+        except anthropic.APIError as err:
+            raise _map_error(err) from err
+        await sentences.flush()
+        text = "".join(b.text for b in final.content if getattr(b, "type", "") == "text").strip()
+        if not text:
+            raise LLMError("empty_response", "Claude returned an empty answer.")
+        return text
+
+    async def stream_search(
+        self,
+        system: str,
+        message: Message,
+        max_tokens: int,
+        max_searches: int,
+        on_text: OnText,
+        on_search: OnSearch,
+    ) -> SearchResult:
+        """
+        `search_complete`, streamed. Sentences go to `on_text` as they are
+        written; `on_search` fires when Claude starts a web search, so the app
+        can say "one moment" instead of going silent.
+        """
+        client = self._client_for_key()
+        messages: list[dict] = [{"role": "user", "content": message}]
+        content: list = []
+        sentences = SentenceStream(on_text)
+        try:
+            for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+                async with client.messages.stream(
+                    model=self._get_model(),
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                    tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "text":
+                            await sentences.feed(event.text)
+                        elif event.type == "content_block_start" and _type(event.content_block) == "server_tool_use":
+                            await sentences.flush()
+                            await on_search()
+                        elif event.type == "content_block_stop":
+                            await sentences.flush()
+                    final = await stream.get_final_message()
+                content.extend(final.content)
+                if final.stop_reason != "pause_turn":
+                    break
+                messages.append({"role": "assistant", "content": final.content})
+        except anthropic.APIError as err:
+            raise _map_error(err) from err
+        await sentences.flush()
+        return parse_search_response(content)
+
     async def search_complete(
-        self, system: str, message: str, max_tokens: int = 700, max_searches: int = 3
+        self, system: str, message: Message, max_tokens: int = 700, max_searches: int = 3
     ) -> SearchResult:
         """Claude decides whether to search: if the slides answer it, it doesn't."""
         client = self._client_for_key()

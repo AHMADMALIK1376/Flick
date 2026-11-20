@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS qa_log (
     spoken        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS log_by_time ON qa_log(timestamp DESC);
+
+-- Slide explanations written before the talk, so "explain this slide" starts at once.
+CREATE TABLE IF NOT EXISTS slide_explanations (
+    deck_id TEXT NOT NULL,
+    number  INTEGER NOT NULL,
+    text    TEXT NOT NULL,
+    PRIMARY KEY (deck_id, number),
+    FOREIGN KEY (deck_id, number) REFERENCES slides(deck_id, number) ON DELETE CASCADE
+);
+
+-- Meaning vectors of prepared questions, for matching questions by meaning.
+CREATE TABLE IF NOT EXISTS question_embeddings (
+    question_id TEXT PRIMARY KEY REFERENCES predicted_questions(id) ON DELETE CASCADE,
+    model       TEXT NOT NULL,
+    vector      BLOB NOT NULL            -- float32, normalised
+);
 """
 
 #: Answers kept for review after talks.
@@ -180,7 +196,8 @@ class Database:
                 """
                 SELECT d.*,
                        (SELECT COUNT(*) FROM slides s WHERE s.deck_id = d.id) AS slide_count,
-                       (SELECT COUNT(*) FROM predicted_questions q WHERE q.deck_id = d.id) AS question_count
+                       (SELECT COUNT(*) FROM predicted_questions q WHERE q.deck_id = d.id) AS question_count,
+                       (SELECT COUNT(*) FROM slide_explanations e WHERE e.deck_id = d.id) AS explanation_count
                 FROM decks d ORDER BY d.loaded_at DESC
                 """
             ).fetchall()
@@ -191,6 +208,7 @@ class Database:
                 loaded_at=r["loaded_at"],
                 slide_count=r["slide_count"],
                 question_count=r["question_count"],
+                explanation_count=r["explanation_count"],
                 prep_status=r["prep_status"],
                 prep_error=r["prep_error"],
                 active=bool(r["active"]),
@@ -232,6 +250,48 @@ class Database:
                 [(q.id, deck_id, q.slide, q.question, q.answer) for q in questions],
             )
             self._conn.commit()
+
+    # ── Slide explanations ──────────────────────────────────────────────────
+
+    def save_explanations(self, deck_id: str, explanations: dict[int, str]) -> None:
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO slide_explanations(deck_id, number, text) VALUES (?, ?, ?) "
+                "ON CONFLICT(deck_id, number) DO UPDATE SET text = excluded.text",
+                [(deck_id, n, t) for n, t in explanations.items()],
+            )
+            self._conn.commit()
+
+    def get_explanation(self, deck_id: str, number: int) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT text FROM slide_explanations WHERE deck_id = ? AND number = ?", (deck_id, number)
+            ).fetchone()
+        return row["text"] if row else None
+
+    def explanation_count(self, deck_id: str) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM slide_explanations WHERE deck_id = ?", (deck_id,)).fetchone()[0]
+
+    # ── Question embeddings ─────────────────────────────────────────────────
+
+    def save_embeddings(self, model: str, vectors: dict[str, bytes]) -> None:
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO question_embeddings(question_id, model, vector) VALUES (?, ?, ?) "
+                "ON CONFLICT(question_id) DO UPDATE SET model = excluded.model, vector = excluded.vector",
+                [(qid, model, v) for qid, v in vectors.items()],
+            )
+            self._conn.commit()
+
+    def get_embeddings(self, deck_id: str, model: str) -> dict[str, bytes]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.question_id, e.vector FROM question_embeddings e "
+                "JOIN predicted_questions q ON q.id = e.question_id WHERE q.deck_id = ? AND e.model = ?",
+                (deck_id, model),
+            ).fetchall()
+        return {r["question_id"]: r["vector"] for r in rows}
 
     # ── Q&A log ─────────────────────────────────────────────────────────────
 

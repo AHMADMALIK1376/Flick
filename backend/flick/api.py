@@ -23,10 +23,13 @@ from . import __version__
 from .models import MODELS, Answer, Deck, DeckSummary, Settings, SettingsUpdate
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
+from .transcribe import TranscriberUnavailable
 from .text import SlideTarget
 
 #: Largest .pptx accepted by upload.
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+#: Largest recording accepted (about 10 minutes of 16 kHz mono WAV).
+MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -58,6 +61,9 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     async def lifespan(_app: FastAPI):
         if on_ready:
             on_ready()
+        # Load the speech and meaning models and open the Claude connection
+        # now, in the background, so the first question doesn't wait for them.
+        service._background(service.warm_up())
         yield
 
     app = FastAPI(title="Flick backend", version=__version__, lifespan=lifespan, default_response_class=UTF8JSONResponse)
@@ -99,6 +105,18 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             raise HTTPException(status_code=400, detail="Unknown model.")
         service.db.update_settings(changes)
         return public_settings()
+
+    @app.get("/status", dependencies=auth)
+    def status() -> dict:
+        """Which speed features are ready (models load in the background after startup)."""
+        settings = service.db.get_settings()
+        t, e = service.transcriber, service.embedder
+        return {
+            "speech_model": {"ready": bool(t and t.ready(settings.speech_model)), "error": getattr(t, "error", None)},
+            "meaning_model": {"ready": bool(e and e.ready()), "error": getattr(e, "error", None)},
+            "powerpoint": service.bridge.supported,
+            "has_api_key": bool(settings.anthropic_api_key),
+        }
 
     @app.get("/models", dependencies=auth)
     def models() -> list[dict]:
@@ -182,6 +200,27 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             return await service.explain_slide(SlideTarget("number", number=req.slide))
         return await service.explain_slide()
 
+    @app.post("/transcribe", dependencies=auth)
+    async def transcribe(audio: UploadFile = File(...)) -> dict:
+        """Speech → text (WAV, MP3, WebM…). For showing the words before answering."""
+        data = await _read_audio(audio)
+        try:
+            text, ms = await service.transcribe(data)
+        except (UserError, TranscriberUnavailable) as err:
+            raise HTTPException(status_code=503, detail=str(err))
+        return {"text": text, "duration_ms": ms}
+
+    @app.post("/ask-audio", dependencies=auth)
+    async def ask_audio(audio: UploadFile = File(...)) -> dict:
+        """Speech → text → answer in one request: one round trip less than /transcribe + /ask."""
+        data = await _read_audio(audio)
+        try:
+            text, ms = await service.transcribe(data)
+        except (UserError, TranscriberUnavailable) as err:
+            raise HTTPException(status_code=503, detail=str(err))
+        answer = await service.ask(text)
+        return {"transcript": text, "transcribe_ms": ms, "answer": answer.model_dump() if answer else None}
+
     @app.get("/log", dependencies=auth, response_model=list[Answer])
     def log(limit: int = Query(default=300, ge=1, le=1000)):
         return service.db.get_log(limit=limit)
@@ -206,6 +245,15 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             service.events.unsubscribe(queue)
 
     return app
+
+
+async def _read_audio(audio: UploadFile) -> bytes:
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="That recording is too long.")
+    if not data:
+        raise HTTPException(status_code=400, detail="The recording is empty.")
+    return data
 
 
 def _summary(service: FlickService, deck_id: str) -> DeckSummary:

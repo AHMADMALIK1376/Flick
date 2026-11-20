@@ -47,11 +47,14 @@ class Deck(BaseModel):
 
 
 class DeckSummary(BaseModel):
+    """`explanation_count`: slides with an explanation ready (instant "explain this slide")."""
+
     id: str
     name: str
     loaded_at: float
     slide_count: int
     question_count: int
+    explanation_count: int = 0
     prep_status: PrepStatus
     prep_error: Optional[str] = None
     active: bool
@@ -72,6 +75,9 @@ class Answer(BaseModel):
     duration_ms: int = 0
     timestamp: float
     speak: bool  # whether this answer should be read aloud now
+    # True when the text was already sent sentence by sentence ("answer_delta"
+    # events) and spoken as it arrived: don't speak the final text again.
+    streamed: bool = False
 
 
 class PrepProgress(BaseModel):

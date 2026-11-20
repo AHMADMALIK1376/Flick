@@ -1,5 +1,16 @@
 """Everything Flick does as a presentation assistant: loading decks, preparing
-likely questions, answering live questions and explaining slides."""
+likely questions and slide explanations, answering live questions and
+explaining slides.
+
+Speed is the point, so:
+- prepared answers are matched by words (instant) and by meaning (~20 ms);
+- slide explanations are written before the talk, so "explain this slide"
+  starts at once;
+- live answers are streamed sentence by sentence ("answer_delta" events), so
+  speech starts after the first sentence;
+- the speech model, the meaning model and the Claude connection are warmed up
+  at startup, not on the first question.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +20,25 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from . import engine
 from .db import Database
 from .events import EventBus
 from .llm import LLM, LLMError
-from .models import Answer, Deck, PrepProgress
+from .models import Answer, Deck, PredictedQuestion, PrepProgress
 from .powerpoint import PowerPointBridge
 from .pptx_reader import read_pptx
-from .text import SlideTarget, clean_question, is_bare_address, is_nothing_heard, parse_slide_command
+from .semantic import Embedder, best_semantic_match, to_blob
+from .text import (
+    SlideTarget,
+    clean_question,
+    is_bare_address,
+    is_nothing_heard,
+    is_plain_explain_request,
+    parse_slide_command,
+)
+from .transcribe import Transcriber
 
 #: Earlier questions given to Claude so follow-ups ("explain that again") make sense.
 RECENT_FOR_CONTEXT = 3
@@ -29,18 +51,48 @@ class UserError(Exception):
 
 
 class FlickService:
-    def __init__(self, db: Database, llm: LLM, bridge: PowerPointBridge, events: EventBus):
+    def __init__(
+        self,
+        db: Database,
+        llm: LLM,
+        bridge: PowerPointBridge,
+        events: EventBus,
+        embedder: Optional[Embedder] = None,
+        transcriber: Optional[Transcriber] = None,
+    ):
         self.db = db
         self.llm = llm
         self.bridge = bridge
         self.events = events
+        self.embedder = embedder
+        self.transcriber = transcriber
         self._preparing: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
+
+    # ── Startup ─────────────────────────────────────────────────────────────
+
+    async def warm_up(self) -> None:
+        """Load models and open the Claude connection in the background, so the first question is fast."""
+        jobs = []
+        warm = getattr(self.llm, "warm_up", None)
+        if warm:
+            jobs.append(warm())
+        if self.transcriber:
+            jobs.append(asyncio.to_thread(self.transcriber.load, self.db.get_settings().speech_model))
+        if self.embedder and hasattr(self.embedder, "load"):
+            jobs.append(self._load_embedder_and_index())
+        await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def _load_embedder_and_index(self) -> None:
+        await asyncio.to_thread(self.embedder.load)  # type: ignore[union-attr]
+        deck = self.active_deck()
+        if deck:
+            await self._index_questions(deck)
 
     # ── Decks ───────────────────────────────────────────────────────────────
 
     async def load_deck(self, file_path: str, data: Optional[bytes] = None, prepare: bool = True) -> Deck:
-        """Reads a .pptx, makes it the active deck and starts preparing questions.
+        """Reads a .pptx, makes it the active deck and starts preparing.
         Loading the same file again (after editing the slides) replaces the old copy."""
         if Path(file_path).suffix.lower() != ".pptx":
             raise UserError("Flick reads PowerPoint .pptx files. Save older .ppt files as .pptx first.")
@@ -72,32 +124,56 @@ class FlickService:
         return await self.load_deck(path)
 
     async def prepare_deck(self, deck_id: str) -> None:
-        """Predicts likely audience questions. Safe to call repeatedly."""
+        """
+        Before the talk: predicts likely questions, indexes them by meaning, then
+        writes every slide's explanation. Safe to call repeatedly.
+        """
         deck = self.db.get_deck(deck_id)
         if deck is None or deck_id in self._preparing:
             return
         self._preparing.add(deck_id)
+        question_batches = -(-len(deck.slides) // engine.SLIDES_PER_BATCH)
+        explain_batches = -(-len(deck.slides) // engine.SLIDES_PER_EXPLAIN_BATCH)
+        total = question_batches + explain_batches
+        done_explain = 0
 
-        async def progress(done: int, total: int, status: str = "preparing", message: Optional[str] = None):
+        def progress(done: int, status: str = "preparing", message: Optional[str] = None) -> None:
             self.events.publish(
                 "prep_progress",
                 PrepProgress(deck_id=deck_id, status=status, done=done, total=total, message=message).model_dump(),
             )
 
+        async def on_questions(done: int, _total: int) -> None:
+            progress(done, message="Predicting audience questions…")
+
+        async def on_explained(batch: dict[int, str]) -> None:
+            nonlocal done_explain
+            self.db.save_explanations(deck_id, batch)
+            done_explain += 1
+            progress(question_batches + done_explain, message="Writing slide explanations…")
+
         try:
             self.db.set_prep_status(deck_id, "preparing")
-            outcome = await engine.predict_questions(self.llm, deck.name, deck.slides, progress)
+            outcome = await engine.predict_questions(self.llm, deck.name, deck.slides, on_questions)
             if outcome.error:
                 message = _friendly(outcome.error)
                 self.db.set_prep_status(deck_id, "error", message)
-                await progress(0, 0, "error", message)
+                progress(0, "error", message)
                 return
             self.db.replace_predicted(deck_id, outcome.questions)
+            deck = self.db.get_deck(deck_id) or deck
+            await self._index_questions(deck)
+
+            await engine.prepare_explanations(self.llm, deck.name, deck.slides, on_explained)
             self.db.set_prep_status(deck_id, "ready")
-            await progress(1, 1, "ready", f"{len(outcome.questions)} questions prepared.")
+            progress(
+                total,
+                "ready",
+                f"{len(outcome.questions)} questions and {self.db.explanation_count(deck_id)} slide explanations ready.",
+            )
         except Exception as err:  # never leave a deck stuck in 'preparing'
             self.db.set_prep_status(deck_id, "error", str(err))
-            await progress(0, 0, "error", str(err))
+            progress(0, "error", str(err))
         finally:
             self._preparing.discard(deck_id)
 
@@ -105,11 +181,46 @@ class FlickService:
         deck_id = self.db.active_deck_id()
         return self.db.get_deck(deck_id) if deck_id else None
 
+    # ── Matching by meaning ─────────────────────────────────────────────────
+
+    def _embedder_ready(self) -> bool:
+        return bool(self.embedder and self.embedder.ready())
+
+    async def _index_questions(self, deck: Deck) -> None:
+        """Stores a meaning vector for every prepared question that lacks one."""
+        if not self._embedder_ready() or not deck.predicted:
+            return
+        have = self.db.get_embeddings(deck.id, self.embedder.name)  # type: ignore[union-attr]
+        missing = [q for q in deck.predicted if q.id not in have]
+        if not missing:
+            return
+        vectors = await asyncio.to_thread(self.embedder.embed, [q.question for q in missing])  # type: ignore[union-attr]
+        self.db.save_embeddings(self.embedder.name, {q.id: to_blob(v) for q, v in zip(missing, vectors)})  # type: ignore[union-attr]
+
+    async def _semantic_match(self, question: str, deck: Deck) -> Optional[PredictedQuestion]:
+        if not self._embedder_ready():
+            return None  # model still loading: word matching and Claude cover it
+        await self._index_questions(deck)
+        vectors = self.db.get_embeddings(deck.id, self.embedder.name)  # type: ignore[union-attr]
+        query: np.ndarray = (await asyncio.to_thread(self.embedder.embed, [question]))[0]  # type: ignore[union-attr]
+        match = best_semantic_match(query, deck.predicted, vectors)
+        return match.item if match else None
+
     # ── Live questions ──────────────────────────────────────────────────────
 
     def question_starting(self) -> None:
         """Called when the presenter starts speaking: look up the slide early."""
         self.bridge.prefetch_slide()
+
+    async def transcribe(self, audio: bytes) -> tuple[str, int]:
+        if self.transcriber is None:
+            raise UserError("Speech recognition is not available.")
+        settings = self.db.get_settings()
+        deck = self.active_deck()
+        hint = ", ".join(s.title for s in deck.slides if s.title) if deck else ""
+        return await asyncio.to_thread(
+            self.transcriber.transcribe, audio, settings.speech_model, settings.language, hint
+        )
 
     async def ask(self, raw: str) -> Optional[Answer]:
         """Answers a spoken or typed question. None when nothing was heard."""
@@ -134,13 +245,28 @@ class FlickService:
         if command:
             return await self.explain_slide(command, question)
 
-        self.events.publish("thinking", {"question": question})
+        answer_id = str(uuid.uuid4())
+        speak = self.db.get_settings().answer_mode == "speak"
+        self.events.publish("thinking", {"id": answer_id, "question": question})
         deck = self.active_deck()
         current_slide = await self.bridge.current_slide() if deck else None
+        streamed = False
+
+        async def on_text(sentence: str) -> None:
+            nonlocal streamed
+            streamed = True
+            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": speak})
+
+        async def on_search() -> None:
+            # "One moment, let me check" — only if nothing has been said yet.
+            self.events.publish("searching", {"id": answer_id, "speak": speak and not streamed})
+
         try:
-            result = await engine.answer_question(self.llm, question, deck, current_slide, self._recent())
+            result = await engine.answer_question(
+                self.llm, question, deck, current_slide, self._recent(), self._semantic_match, on_text, on_search
+            )
             answer = Answer(
-                id=str(uuid.uuid4()),
+                id=answer_id,
                 question=question,
                 answer=result.answer,
                 origin=result.origin,
@@ -148,10 +274,11 @@ class FlickService:
                 current_slide=current_slide,
                 duration_ms=_ms_since(started),
                 timestamp=started,
-                speak=self.db.get_settings().answer_mode == "speak",
+                speak=speak,
+                streamed=streamed,
             )
         except LLMError as err:
-            answer = self._error(question, _friendly(err), current_slide, started)
+            answer = self._error(question, _friendly(err), current_slide, started, answer_id)
         return self._finish(answer, deck)
 
     async def explain_slide(
@@ -190,22 +317,52 @@ class FlickService:
                 deck,
             )
 
-        self.events.publish("thinking", {"question": label})
+        answer_id = str(uuid.uuid4())
+
+        # Written before the talk: starts at once.
+        ready = self.db.get_explanation(deck.id, number) if is_plain_explain_request(request) else None
+        if ready:
+            return self._finish(
+                Answer(
+                    id=answer_id,
+                    question=label,
+                    answer=ready,
+                    origin="explain",
+                    current_slide=number,
+                    duration_ms=_ms_since(started),
+                    timestamp=started,
+                    speak=True,
+                ),
+                deck,
+            )
+
+        # Not ready yet, or a special request ("in Urdu", "in simple words"): write it now, streamed.
+        self.events.publish("thinking", {"id": answer_id, "question": label})
+        streamed = False
+
+        async def on_text(sentence: str) -> None:
+            nonlocal streamed
+            streamed = True
+            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": True})
+
         try:
-            text = await engine.explain_slide(self.llm, deck, number, request)
+            text = await engine.explain_slide(self.llm, deck, number, request, on_text)
         except LLMError as err:
-            return self._finish(self._error(label, _friendly(err), number, started), deck)
-        answer = Answer(
-            id=str(uuid.uuid4()),
-            question=label,
-            answer=text,
-            origin="explain",
-            current_slide=number,
-            duration_ms=_ms_since(started),
-            timestamp=started,
-            speak=True,
+            return self._finish(self._error(label, _friendly(err), number, started, answer_id), deck)
+        return self._finish(
+            Answer(
+                id=answer_id,
+                question=label,
+                answer=text,
+                origin="explain",
+                current_slide=number,
+                duration_ms=_ms_since(started),
+                timestamp=started,
+                speak=True,
+                streamed=streamed,
+            ),
+            deck,
         )
-        return self._finish(answer, deck)
 
     # ── Internals ───────────────────────────────────────────────────────────
 
@@ -214,10 +371,12 @@ class FlickService:
         useful = [e for e in entries if e.origin not in ("error", "greeting", "explain")]
         return [(e.question, e.answer) for e in reversed(useful[:RECENT_FOR_CONTEXT])]
 
-    def _error(self, question: str, message: str, slide: Optional[int], started: float) -> Answer:
+    def _error(
+        self, question: str, message: str, slide: Optional[int], started: float, answer_id: Optional[str] = None
+    ) -> Answer:
         # Never read an error aloud to the audience.
         return Answer(
-            id=str(uuid.uuid4()),
+            id=answer_id or str(uuid.uuid4()),
             question=question,
             answer=message,
             origin="error",

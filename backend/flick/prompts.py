@@ -65,6 +65,21 @@ Rules:
 - Speak in the language of the request (English, Urdu, or Roman Urdu)."""
 
 
+EXPLAIN_BATCH_SYSTEM = EXPLAIN_SYSTEM + """
+
+You are preparing these explanations before the talk, for several slides at once. Write one explanation per slide, in English. Reply with JSON only, in exactly this shape:
+{"explanations":[{"slide":<slide number>,"text":"..."}]}"""
+
+
+def explain_batch_message(deck_name: str, slides: Sequence[Slide], all_slides: Sequence[Slide]) -> str:
+    titles = "\n".join(f"{s.number}. {s.title or '(untitled)'}" for s in all_slides)
+    return (
+        f"Presentation: {deck_name}\n\nAll slide titles, for context:\n{titles}\n\n"
+        + "\n\n".join(f"<slide_to_explain>\n{format_slide(s)}\n</slide_to_explain>" for s in slides)
+        + "\n\nWrite the spoken explanation for each slide above."
+    )
+
+
 def explain_message(deck_name: str, slide: Slide, previous: Optional[Slide], next_: Optional[Slide], request: str) -> str:
     parts = [f"Presentation: {deck_name}"]
     if previous:
@@ -78,21 +93,38 @@ def explain_message(deck_name: str, slide: Slide, previous: Optional[Slide], nex
 
 def live_message(
     question: str, deck: Optional[Deck], current_slide: Optional[int], recent: Sequence[tuple[str, str]]
-) -> str:
-    parts = [deck_context(deck, current_slide) if deck else "No presentation is loaded."]
+) -> list[dict]:
+    """
+    Two content blocks. The first (the deck) is the same for every question in
+    a talk, so it is marked for prompt caching: Claude reuses it instead of
+    reading the whole deck again, which makes answers start sooner. The second
+    holds what changes per question.
+    """
+    context = deck_context(deck) if deck else "No presentation is loaded."
+    parts = []
     if current_slide:
         parts.append(f"The presenter is currently on slide {current_slide}.")
     if recent:
         parts.append("<recent_questions>\n" + "\n\n".join(f"Q: {q}\nA: {a}" for q, a in recent) + "\n</recent_questions>")
     parts.append(f"Audience question: {question}")
-    return "\n\n".join(parts)
+    return [
+        {"type": "text", "text": context, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "\n\n".join(parts)},
+    ]
 
 
-def deck_context(deck: Deck, current_slide: Optional[int]) -> str:
-    """The deck as text. When it is too long, slides near the one on screen are kept first."""
-    ordered = (
-        sorted(deck.slides, key=lambda s: abs(s.number - current_slide)) if current_slide else list(deck.slides)
-    )
+def message_text(message) -> str:
+    """The plain text of a message, whether a string or content blocks."""
+    return message if isinstance(message, str) else "\n\n".join(b.get("text", "") for b in message)
+
+
+def deck_context(deck: Deck) -> str:
+    """
+    The deck as text, identical for every question (so it can be cached).
+    A very long deck keeps its slides in order until ~60,000 characters, which
+    covers any normal lecture; the current slide is named in the second block.
+    """
+    ordered = list(deck.slides)
     kept: list[Slide] = []
     used = 0
     for slide in ordered:

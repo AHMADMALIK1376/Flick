@@ -53,7 +53,7 @@ async def test_private_mode_and_followups(db):
     service = make_service(db, llm)
     db.update_settings({"answer_mode": "private"})
     a = await service.ask("What is a GPU?")
-    assert (a.answer, a.speak) == ("LIVE", False)
+    assert (a.answer, a.speak) == ("LIVE.", False)
     await service.ask("Can you explain that more simply?")
     assert "Q: What is a GPU?" in llm.search_calls[1][1]
 

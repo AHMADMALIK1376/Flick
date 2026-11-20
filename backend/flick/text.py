@@ -90,3 +90,18 @@ def parse_slide_command(text: str) -> Optional[SlideTarget]:
     if word and word.group(1) in NUMBER_WORDS:
         return SlideTarget("number", number=NUMBER_WORDS[word.group(1)])
     return SlideTarget("current")
+
+
+#: Words a plain "explain this slide" request is made of. Anything else ("in
+#: simple words", "in Urdu", "focus on the table") asks for something the
+#: explanation written before the talk does not have, so it is written live.
+_PLAIN_WORDS = set(
+    "flick hey hi ok okay please can could would you now explain describe walk talk go run through over us them "
+    "everyone audience class the this that current our a an to for of on screen slide slides number next previous "
+    "last showing shown".split()
+) | set(NUMBER_WORDS)
+
+
+def is_plain_explain_request(text: str) -> bool:
+    words = re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split()
+    return all(w in _PLAIN_WORDS or re.fullmatch(r"\d{1,3}(st|nd|rd|th)?", w) for w in words)

@@ -19,7 +19,9 @@ from .db import Database
 from .events import EventBus
 from .llm import Claude
 from .powerpoint import PowerPointBridge
+from .semantic import LocalEmbedder
 from .service import FlickService
+from .transcribe import Transcriber
 
 
 def default_data_dir() -> Path:
@@ -39,7 +41,15 @@ def build_service(data_dir: Path) -> FlickService:
         get_key=lambda: db.get_settings().anthropic_api_key,
         get_model=lambda: db.get_settings().model,
     )
-    return FlickService(db, llm, PowerPointBridge(), EventBus())
+    models = data_dir / "models"  # downloaded once, on first run
+    return FlickService(
+        db,
+        llm,
+        PowerPointBridge(),
+        EventBus(),
+        embedder=LocalEmbedder(models / "meaning"),
+        transcriber=Transcriber(models / "whisper"),
+    )
 
 
 def main() -> None:
