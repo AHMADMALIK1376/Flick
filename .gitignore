@@ -49,3 +49,9 @@ apps/desktop/release/
 # pnpm
 .pnp
 .pnp.js
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

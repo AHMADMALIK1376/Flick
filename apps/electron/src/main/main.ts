@@ -2,38 +2,38 @@ import {
   app,
   BrowserWindow,
   Tray,
+  dialog,
   globalShortcut,
   ipcMain,
-  clipboard,
   screen,
   session,
+  shell,
 } from 'electron';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import Store from 'electron-store';
-import { v4 as uuidv4 } from 'uuid';
 import { IpcChannel } from '../shared/ipc-channels';
-import type { Settings, TranscriptEntry } from '../shared/types';
+import type { AnswerPayload, Settings, ToastMessage } from '../shared/types';
 import { WhisperService, resolveModelId, resolveLanguage } from './whisper-service';
 import {
   resolveModelCacheDir,
   readConfigModelDir,
-  readConfigBrowserDir,
   readConfigKey,
   pickModelDirSource,
   MODEL_DIR_ENV,
-  BROWSER_DIR_ENV,
 } from './model-paths';
 import { safeLog, safeError, ProgressThrottle } from './logging';
-import { ConnectorManager } from './connectors/connector-manager';
-import { ConnectorLoginBrowser } from './connectors/connector-browser';
 import { ModelDownloader } from './model-downloader';
-import { ClipboardManager } from './clipboard-manager';
-import { HistoryStore } from './history-store';
 import { TrayManager } from './tray-manager';
-import { AgentService } from './agent/agent-service';
-import type { ProviderId } from './agent/llm/providers/llm-provider';
+import { LLMService } from './llm/llm-service';
+import type { ProviderId } from './llm/providers/llm-provider';
+import { PowerPointBridge } from './presentation/powerpoint-bridge';
+import {
+  PresentationService,
+  type DeckData,
+  type LogData,
+} from './presentation/presentation-service';
 
 // ── Crash guards ────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Relocate the whole userData directory ────────────────────────────────────
 //
-// Moves settings, history, connectors, and all Chromium caches off the system
+// Moves settings, decks, the question log, and all Chromium caches off the system
 // drive when FLICK_USERDATA_DIR or a userDataDir in flick.config.json says so.
 // Must run before any store is created or any path is read — app.setPath only
 // takes effect if nothing has touched userData yet. Falls back to the default
@@ -99,22 +99,6 @@ process.on('unhandledRejection', (reason) => {
   } catch (err) {
     safeError('[Startup] could not relocate userData, using default:', err);
   }
-})();
-
-// Playwright's bundled browsers (~1.3GB) default to %LOCALAPPDATA%. Set the
-// path from config rather than a machine environment variable, so it works on
-// a fresh checkout without anyone having to configure their shell.
-(function relocatePlaywrightBrowsers(): void {
-  if (process.env.PLAYWRIGHT_BROWSERS_PATH) return; // respect an explicit override
-  const configured = readConfigKey('playwrightBrowsersPath', [
-    app.getAppPath(),
-    process.cwd(),
-    path.join(__dirname, '..', '..'),
-    path.join(__dirname, '..', '..', '..'),
-  ]);
-  if (!configured || !path.isAbsolute(configured)) return;
-  process.env.PLAYWRIGHT_BROWSERS_PATH = configured;
-  safeLog(`[Startup] Playwright browsers at ${configured}`);
 })();
 
 // ── Model Cache Directory ───────────────────────────────────────────────────
@@ -170,154 +154,134 @@ function getModelCacheDir(): string {
 /** Last path announced, so the location is logged on change rather than per call. */
 let lastLoggedModelDir: string | null = null;
 
-/**
- * The browser profile directory — cookies, cache, saved logins for the browser
- * agent and connectors. It grows large (hundreds of MB), so like the model
- * store it is relocatable off a full system drive via FLICK_BROWSER_DIR or a
- * browserDataDir in flick.config.json. Defaults to userData/browser-data.
- */
-let lastLoggedBrowserDir: string | null = null;
-function getBrowserDataDir(): string {
-  const env = (process.env[BROWSER_DIR_ENV] ?? '').trim();
-  const configFile = readConfigBrowserDir(
-    app.getAppPath(),
-    process.cwd(),
-    path.join(__dirname, '..', '..'),
-    path.join(__dirname, '..', '..', '..'),
-  );
-  const setting = (settingsStore.get('browserDataDir') ?? '').trim();
-
-  let dir: string;
-  let source: string;
-  if (env && path.isAbsolute(env)) {
-    dir = env;
-    source = BROWSER_DIR_ENV;
-  } else if (configFile && path.isAbsolute(configFile)) {
-    dir = configFile;
-    source = 'flick.config.json';
-  } else if (setting && path.isAbsolute(setting)) {
-    dir = setting;
-    source = 'settings';
-  } else {
-    dir = path.join(app.getPath('userData'), 'browser-data');
-    source = 'default';
-  }
-
-  if (dir !== lastLoggedBrowserDir) {
-    lastLoggedBrowserDir = dir;
-    safeLog(`[Browser] profile at ${dir} (source: ${source})`);
-  }
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
 // ── Stores & Services ───────────────────────────────────────────────────────
 
-const historyStoreInstance = new HistoryStore();
 const whisperService = new WhisperService();
-
-// ── Connectors ───────────────────────────────────────────────────────────────
-// Kept in a store of their own rather than in settings.json, which is rewritten
-// often and has a history of clobbering values.
-const connectorStore = new Store<{ connectedIds: string[] }>({
-  name: 'connectors',
-  defaults: { connectedIds: [] },
-});
-const connectorManager = new ConnectorManager({
-  getConnectedIds: () => connectorStore.get('connectedIds'),
-  setConnectedIds: (ids) => connectorStore.set('connectedIds', ids),
-});
-const loginBrowser = new ConnectorLoginBrowser(() => getBrowserDataDir());
-const clipboardManager = new ClipboardManager();
 const trayManager = new TrayManager();
 
-const agentService = new AgentService({
-  notifySuccess: (msg) => {
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, { type: 'success', message: msg, autoDismissMs: 4000 });
-    }
-  },
-  notifyError: (msg) => {
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, { type: 'error', message: msg, autoDismissMs: 4000 });
-    }
-  },
-  notifyUnrecognized: (text) => {
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, { type: 'warning', message: `Command not recognized: "${text}"`, autoDismissMs: 4000 });
-    }
-  },
-  requestConfirm: (prompt) => {
-    // No dashboard means nobody can answer, so report undelivered and let the
-    // permission gate fail closed.
-    if (!dashboardWindow || dashboardWindow.isDestroyed()) {
-      return false;
-    }
-    dashboardWindow.show();
-    dashboardWindow.focus();
-    dashboardWindow.webContents.send(IpcChannel.AGENT_CONFIRM_REQUEST, prompt);
-    return true;
-  },
-  speak: (text) => {
-    // The widget window is always alive, so it is the reliable place to speak
-    // from. The renderer uses the Web Speech API with the OS voice.
-    if (widgetWindow && !widgetWindow.isDestroyed()) {
-      widgetWindow.webContents.send(IpcChannel.AGENT_SPEAK, text);
-    }
-  },
-});
-
-// Keep a reference to the raw electron-store for direct access where needed
 const settingsStore = new Store<Settings>({
   name: 'settings',
   defaults: {
     hotkeyAccelerator: process.platform === 'darwin' ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space',
     hotkeyMode: 'toggle' as const,
-    modelName: 'medium',
+    // 'small' balances accuracy with speed — a live answer cannot wait on a
+    // slow transcription. 'medium' is better for Urdu.
+    modelName: 'small',
     modelCacheDir: '',
-    browserDataDir: '',
     language: 'en',
-    autoCopyToClipboard: true,
     showFloatingWidget: true,
     launchAtStartup: false,
     silenceDurationMs: 1500,
     widgetPosition: null,
     onboardingComplete: false,
-    aiAgentEnabled: false,
     openaiApiKey: '',
     geminiApiKey: '',
     deepseekApiKey: '',
     anthropicApiKey: '',
     qwenApiKey: '',
-    llmProvider: '',
-    llmModel: '',
-    browserAgentHeadless: false,
+    tavilyApiKey: '',
+    llmProvider: 'anthropic',
+    llmModel: 'claude-haiku-5-5',
+    answerMode: 'speak',
+    explainHotkey: process.platform === 'darwin' ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
   },
 });
+
+// Decks and the question log get stores of their own: a deck's slide text is
+// large, and settings.json is rewritten on every settings save.
+const deckStore = new Store<DeckData>({
+  name: 'decks',
+  defaults: { decks: [], activeDeckId: null },
+});
+const logStore = new Store<LogData>({
+  name: 'qa-log',
+  defaults: { entries: [] },
+});
+
+const llmService = new LLMService();
+
+const presentation = new PresentationService({
+  llm: llmService,
+  decks: deckStore,
+  log: logStore,
+  bridge: new PowerPointBridge(),
+  settings: () => ({
+    answerMode: settingsStore.get('answerMode') ?? 'speak',
+    tavilyApiKey: settingsStore.get('tavilyApiKey') ?? '',
+  }),
+  notifier: {
+    onThinking: (question) => {
+      showAnswerCard();
+      send(answerWindow, IpcChannel.THINKING, question);
+      send(dashboardWindow, IpcChannel.THINKING, question);
+    },
+    onAnswer: (answer: AnswerPayload) => {
+      showAnswerCard();
+      send(answerWindow, IpcChannel.ANSWER, answer);
+      send(dashboardWindow, IpcChannel.ANSWER, answer);
+      if (answer.speak) send(widgetWindow, IpcChannel.SPEAK, answer.answer);
+    },
+    onPrepProgress: (progress) => {
+      send(dashboardWindow, IpcChannel.DECK_PREP_PROGRESS, progress);
+    },
+  },
+});
+
+/** Sends to a window if it is still alive. */
+function send(win: BrowserWindow | null, channel: string, payload?: unknown): void {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function toast(message: string, type: ToastMessage['type'] = 'success'): void {
+  send(dashboardWindow, IpcChannel.TOAST, { type, message, autoDismissMs: 4000 });
+}
+
+/** Pushes every stored API key and the chosen model into the LLM service. */
+function applyLlmSettings(): void {
+  const keys: Array<[ProviderId, keyof Settings]> = [
+    ['openai', 'openaiApiKey'],
+    ['gemini', 'geminiApiKey'],
+    ['deepseek', 'deepseekApiKey'],
+    ['anthropic', 'anthropicApiKey'],
+    ['qwen', 'qwenApiKey'],
+  ];
+  for (const [provider, setting] of keys) {
+    llmService.setApiKey(provider, String(settingsStore.get(setting) ?? ''));
+  }
+  const provider = settingsStore.get('llmProvider');
+  const model = settingsStore.get('llmModel');
+  if (provider && model) llmService.setActiveSelection(provider as ProviderId, model);
+}
 
 // ── Window references ───────────────────────────────────────────────────────
 
 let widgetWindow: BrowserWindow | null = null;
-let recorderWindow: BrowserWindow | null = null;
+let answerWindow: BrowserWindow | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
+const preloadPath = () => path.join(__dirname, '..', 'preload', 'preload.js');
+const rendererPath = (...parts: string[]) => path.join(__dirname, '..', 'renderer', ...parts);
+
 // ── Window creation ─────────────────────────────────────────────────────────
 
+/**
+ * Keeps a window above a full-screen PowerPoint slideshow. The default
+ * always-on-top level sits below full-screen apps on Windows.
+ */
+function floatAboveSlideshow(win: BrowserWindow): void {
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+}
+
 function createFloatingWidget(): BrowserWindow {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 
   const savedPosition = settingsStore.get('widgetPosition');
-  const x = savedPosition ? savedPosition.x : Math.round(screenWidth / 2 - 100);
+  const x = savedPosition ? savedPosition.x : Math.round(screenWidth / 2 - 80);
   const y = savedPosition ? savedPosition.y : screenHeight - 60;
-
-  const preloadPath = path.join(__dirname, '..', 'preload', 'preload.js');
-  console.log('[Main] Preload path:', preloadPath, 'exists:', fs.existsSync(preloadPath));
 
   const win = new BrowserWindow({
     width: 160,
@@ -330,19 +294,18 @@ function createFloatingWidget(): BrowserWindow {
     skipTaskbar: true,
     resizable: false,
     hasShadow: false,
+    focusable: false,
     webPreferences: {
-      preload: preloadPath,
+      preload: preloadPath(),
       contextIsolation: false,
       nodeIntegration: true,
       sandbox: false,
       webSecurity: false,
     },
   });
+  floatAboveSlideshow(win);
+  win.loadFile(rendererPath('widget', 'widget.html'));
 
-  const widgetHtmlPath = path.join(__dirname, '..', 'renderer', 'widget', 'widget.html');
-  win.loadFile(widgetHtmlPath);
-
-  // Persist position when the window is moved (dragged)
   win.on('moved', () => {
     const [wx, wy] = win.getPosition();
     settingsStore.set('widgetPosition', { x: wx, y: wy });
@@ -358,24 +321,52 @@ function createFloatingWidget(): BrowserWindow {
   return win;
 }
 
-function createRecorderWindow(): BrowserWindow {
+/**
+ * The answer card: a small panel in the top-right corner that shows each
+ * question, Flick's answer, where it came from, and any web sources. It is
+ * shown without taking focus, so the presenter's clicker keeps driving
+ * PowerPoint.
+ */
+function createAnswerWindow(): BrowserWindow {
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = 440;
+  const height = 340;
+
   const win = new BrowserWindow({
-    width: 1,
-    height: 1,
+    width,
+    height,
+    x: area.x + area.width - width - 16,
+    y: area.y + 16,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    minWidth: 320,
+    minHeight: 200,
+    skipTaskbar: true,
     show: false,
+    hasShadow: true,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      webSecurity: false,
     },
   });
+  floatAboveSlideshow(win);
+  win.loadFile(rendererPath('answer', 'answer.html'));
 
-  const recorderHtmlPath = path.join(__dirname, '..', 'renderer', 'recorder', 'recorder.html');
-  win.loadFile(recorderHtmlPath);
-
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
   return win;
+}
+
+function showAnswerCard(): void {
+  if (!answerWindow || answerWindow.isDestroyed()) answerWindow = createAnswerWindow();
+  if (!answerWindow.isVisible()) answerWindow.showInactive();
 }
 
 function createOnboardingWindow(): BrowserWindow {
@@ -386,27 +377,24 @@ function createOnboardingWindow(): BrowserWindow {
     resizable: true,
     frame: true,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
 
-  const onboardingHtmlPath = path.join(__dirname, '..', 'renderer', 'onboarding', 'onboarding.html');
-  win.loadFile(onboardingHtmlPath);
-
+  win.loadFile(rendererPath('onboarding', 'onboarding.html'));
   win.on('closed', () => {
     onboardingWindow = null;
   });
-
   return win;
 }
 
 function createDashboardWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width: 1040,
+    height: 720,
     minWidth: 460,
     minHeight: 520,
     center: true,
@@ -414,15 +402,14 @@ function createDashboardWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#0a0a0f',
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
 
-  const dashboardHtmlPath = path.join(__dirname, '..', 'renderer', 'dashboard', 'dashboard.html');
-  win.loadFile(dashboardHtmlPath);
+  win.loadFile(rendererPath('dashboard', 'dashboard.html'));
 
   win.on('close', (event) => {
     if (!isQuitting) {
@@ -431,11 +418,15 @@ function createDashboardWindow(): BrowserWindow {
     }
   });
 
-  win.once('ready-to-show', () => {
-    win.show();
-  });
-
+  win.once('ready-to-show', () => win.show());
   return win;
+}
+
+function showDashboard(): void {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.show();
+    dashboardWindow.focus();
+  }
 }
 
 // ── System Tray ─────────────────────────────────────────────────────────────
@@ -443,12 +434,7 @@ function createDashboardWindow(): BrowserWindow {
 function initTray(): Tray {
   const iconPath = path.join(__dirname, '..', '..', 'assets', 'icon.png');
   return trayManager.create(iconPath, {
-    onDashboard: () => {
-      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-        dashboardWindow.show();
-        dashboardWindow.focus();
-      }
-    },
+    onDashboard: showDashboard,
     onQuit: () => {
       isQuitting = true;
       app.quit();
@@ -472,6 +458,25 @@ function registerGlobalHotkey(accelerator: string): void {
   } else {
     setupToggleHotkey(accelerator);
   }
+  registerExplainHotkey(settingsStore.get('explainHotkey'));
+}
+
+/** One key press: Flick explains the slide on screen to the audience. */
+function registerExplainHotkey(accelerator: string | undefined): void {
+  if (!accelerator) return;
+  try {
+    let last = 0;
+    const ok = globalShortcut.register(accelerator, () => {
+      const now = Date.now();
+      if (now - last < 1000) return;
+      last = now;
+      send(widgetWindow, IpcChannel.STOP_SPEAKING);
+      void presentation.explainSlide();
+    });
+    if (!ok) console.warn(`Failed to register explain-slide hotkey: ${accelerator}`);
+  } catch (err) {
+    console.warn(`Error registering explain-slide hotkey: ${err}`);
+  }
 }
 
 function setupToggleHotkey(accelerator: string): void {
@@ -481,6 +486,7 @@ function setupToggleHotkey(accelerator: string): void {
       const now = Date.now();
       if (now - lastToggle < 500) return;
       lastToggle = now;
+      presentation.questionStarting();
       if (widgetWindow && !widgetWindow.isDestroyed()) {
         widgetWindow.webContents.send(IpcChannel.TOGGLE_RECORDING);
       }
@@ -511,6 +517,7 @@ function setupPushToTalk(): void {
       if (ctrlDown && shiftDown && spaceDown && !recording) {
         recording = true;
         console.log('[PTT] Start recording');
+        presentation.questionStarting();
         if (widgetWindow && !widgetWindow.isDestroyed()) {
           widgetWindow.webContents.send('start-recording');
         }
@@ -555,82 +562,28 @@ function stopUiohook(): void {
 // ── IPC Handlers ────────────────────────────────────────────────────────────
 
 function setupIPC(): void {
-  ipcMain.handle(IpcChannel.GET_SETTINGS, () => {
-    return settingsStore.store;
-  });
+  ipcMain.handle(IpcChannel.GET_SETTINGS, () => settingsStore.store);
 
   ipcMain.handle(IpcChannel.UPDATE_SETTINGS, (_event, partial: Partial<Settings>) => {
     for (const [key, value] of Object.entries(partial)) {
       settingsStore.set(key as keyof Settings, value);
     }
-    // Re-register hotkey if it changed
-    if (partial.hotkeyAccelerator) {
-      registerGlobalHotkey(partial.hotkeyAccelerator);
+    if (partial.hotkeyAccelerator || partial.hotkeyMode || partial.explainHotkey) {
+      registerGlobalHotkey(settingsStore.get('hotkeyAccelerator'));
     }
-    // Update agent service settings
-    if ('aiAgentEnabled' in partial) {
-      agentService.setEnabled(partial.aiAgentEnabled as boolean);
+    if ('showFloatingWidget' in partial && widgetWindow && !widgetWindow.isDestroyed()) {
+      partial.showFloatingWidget ? widgetWindow.showInactive() : widgetWindow.hide();
     }
-    // Per-provider API keys → push to LLMService
-    if ('openaiApiKey' in partial) {
-      agentService.setProviderApiKey('openai', partial.openaiApiKey as string);
-    }
-    if ('geminiApiKey' in partial) {
-      agentService.setProviderApiKey('gemini', partial.geminiApiKey as string);
-    }
-    if ('deepseekApiKey' in partial) {
-      agentService.setProviderApiKey('deepseek', partial.deepseekApiKey as string);
-    }
-    if ('anthropicApiKey' in partial) {
-      agentService.setProviderApiKey('anthropic', partial.anthropicApiKey as string);
-    }
-    if ('qwenApiKey' in partial) {
-      agentService.setProviderApiKey('qwen', partial.qwenApiKey as string);
-    }
-    // Provider/model selection → instant switch
-    if ('llmProvider' in partial || 'llmModel' in partial) {
-      const provider = (partial.llmProvider ?? settingsStore.get('llmProvider')) as string;
-      const model = (partial.llmModel ?? settingsStore.get('llmModel')) as string;
-      if (provider && model) {
-        agentService.setActiveSelection(provider as ProviderId, model);
-      }
-    }
-    if ('browserAgentHeadless' in partial) {
-      agentService.setBrowserConfig({ headless: partial.browserAgentHeadless as boolean, userDataDir: getBrowserDataDir() });
-    }
-  });
-
-  ipcMain.handle(IpcChannel.GET_HISTORY, () => {
-    return historyStoreInstance.getEntries();
-  });
-
-  ipcMain.handle(IpcChannel.CLEAR_HISTORY, () => {
-    historyStoreInstance.clearHistory();
-  });
-
-  ipcMain.handle(IpcChannel.DELETE_HISTORY_ENTRY, (_event, id: string) => {
-    return historyStoreInstance.deleteEntry(id);
-  });
-
-  ipcMain.handle(IpcChannel.UPDATE_HISTORY_ENTRY, (_event, id: string, text: string) => {
-    return historyStoreInstance.updateEntry(id, text);
-  });
-
-  ipcMain.handle(IpcChannel.COPY_TO_CLIPBOARD, (_event, text: string) => {
-    clipboard.writeText(text);
+    applyLlmSettings();
   });
 
   ipcMain.handle(IpcChannel.WIDGET_POSITION_SAVE, (_event, position: { x: number; y: number }) => {
     settingsStore.set('widgetPosition', position);
   });
 
-  ipcMain.handle(IpcChannel.WIDGET_POSITION_LOAD, () => {
-    return settingsStore.get('widgetPosition');
-  });
+  ipcMain.handle(IpcChannel.WIDGET_POSITION_LOAD, () => settingsStore.get('widgetPosition'));
 
-  ipcMain.handle(IpcChannel.IS_ONBOARDING_DONE, () => {
-    return settingsStore.get('onboardingComplete');
-  });
+  ipcMain.handle(IpcChannel.IS_ONBOARDING_DONE, () => settingsStore.get('onboardingComplete'));
 
   ipcMain.handle(IpcChannel.ONBOARDING_COMPLETE, () => {
     settingsStore.set('onboardingComplete', true);
@@ -638,188 +591,106 @@ function setupIPC(): void {
       onboardingWindow.destroy();
       onboardingWindow = null;
     }
-    // Create dashboard window after first-launch onboarding completes
     if (!dashboardWindow || dashboardWindow.isDestroyed()) {
       dashboardWindow = createDashboardWindow();
     }
   });
 
-  ipcMain.handle(IpcChannel.OPEN_SETTINGS, () => {
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.show();
-      dashboardWindow.focus();
-    }
-  });
-
-  ipcMain.handle(IpcChannel.SHOW_DASHBOARD, () => {
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.show();
-      dashboardWindow.focus();
-    }
-  });
+  ipcMain.handle(IpcChannel.OPEN_SETTINGS, showDashboard);
+  ipcMain.handle(IpcChannel.SHOW_DASHBOARD, showDashboard);
 
   ipcMain.handle(IpcChannel.QUIT_APP, () => {
     isQuitting = true;
     app.quit();
   });
 
-  // Transcribe handler
+  // Speech → text. Answering is a separate step (ASK), so the widget can send
+  // text from either recogniser through the same path.
   ipcMain.handle(IpcChannel.TRANSCRIBE, async (_event, wavBuffer: ArrayBuffer) => {
+    presentation.questionStarting();
+    send(widgetWindow, IpcChannel.TRANSCRIPTION_STATUS, { status: 'transcribing' });
     try {
-      // Notify widget: transcribing
-      if (widgetWindow) {
-        widgetWindow.webContents.send(IpcChannel.TRANSCRIPTION_STATUS, { status: 'transcribing' });
-      }
-
-      // Initialize whisper service if needed
       if (!whisperService.isInitialized()) {
         await whisperService.initialize({
-        cacheDir: getModelCacheDir(),
-        modelId: resolveModelId(settingsStore.get('modelName')),
-      });
+          cacheDir: getModelCacheDir(),
+          modelId: resolveModelId(settingsStore.get('modelName')),
+        });
       }
 
-      // Write WAV buffer to temp file
-      const tmpFile = path.join(os.tmpdir(), `vtt-${Date.now()}.wav`);
+      const tmpFile = path.join(os.tmpdir(), `flick-${Date.now()}.wav`);
       fs.writeFileSync(tmpFile, Buffer.from(wavBuffer));
-
       try {
         const result = await whisperService.transcribe(
           tmpFile,
-          resolveLanguage(settingsStore.get('language'))
+          resolveLanguage(settingsStore.get('language')),
         );
-
-        // AI Agent processing
-        if (agentService.isEnabled() && result.text) {
-          const agentResult = await agentService.process(result.text);
-          if (agentResult.handled) {
-            // Command was executed — notify widget and return without clipboard/history
-            if (widgetWindow) {
-              widgetWindow.webContents.send(IpcChannel.TRANSCRIPTION_STATUS, {
-                status: 'complete',
-                text: result.text,
-              });
-            }
-            return result;
-          }
-        }
-
-        // Auto-copy to clipboard if enabled
-        if (result.text && settingsStore.get('autoCopyToClipboard')) {
-          clipboardManager.copyText(result.text);
-        }
-
-        // Save to history if non-empty
-        if (result.text) {
-          const entry: TranscriptEntry = {
-            id: uuidv4(),
-            text: result.text,
-            timestamp: Date.now(),
-            durationMs: result.durationMs,
-            modelName: settingsStore.get('modelName'),
-          };
-          historyStoreInstance.addEntry(entry);
-        }
-
-        // Notify widget: complete
-        if (widgetWindow) {
-          widgetWindow.webContents.send(IpcChannel.TRANSCRIPTION_STATUS, {
-            status: 'complete',
-            text: result.text,
-          });
-        }
-
+        send(widgetWindow, IpcChannel.TRANSCRIPTION_STATUS, { status: 'complete', text: result.text });
         return result;
       } finally {
-        // Clean up temp file
-        if (fs.existsSync(tmpFile)) {
-          fs.unlinkSync(tmpFile);
-        }
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      if (widgetWindow) {
-        widgetWindow.webContents.send(IpcChannel.TRANSCRIPTION_STATUS, {
-          status: 'error',
-          error: errorMsg,
-        });
-      }
+      send(widgetWindow, IpcChannel.TRANSCRIPTION_STATUS, { status: 'error', error: errorMsg });
       throw err;
     }
   });
 
-  // Agent log handlers
-  ipcMain.handle(IpcChannel.AGENT_GET_LOG, () => {
-    return agentService.getLog();
+  // ── Presentation ───────────────────────────────────────────────────────────
+
+  ipcMain.handle(IpcChannel.ASK, (_event, text: string) => presentation.ask(String(text ?? '')));
+
+  ipcMain.handle(IpcChannel.EXPLAIN_SLIDE, (_event, slideNumber?: number) => {
+    send(widgetWindow, IpcChannel.STOP_SPEAKING);
+    return Number.isInteger(slideNumber) && (slideNumber as number) > 0
+      ? presentation.explainSlide({ kind: 'number', number: slideNumber as number })
+      : presentation.explainSlide();
   });
 
-  ipcMain.handle(IpcChannel.AGENT_CLEAR_LOG, () => {
-    agentService.clearLog();
+  ipcMain.handle(IpcChannel.DECK_UPLOAD, async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choose your presentation',
+      filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
+      properties: ['openFile'],
+    };
+    const picked =
+      dashboardWindow && !dashboardWindow.isDestroyed()
+        ? await dialog.showOpenDialog(dashboardWindow, options)
+        : await dialog.showOpenDialog(options);
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true };
+    return loadDeck(() => presentation.loadDeckFromFile(picked.filePaths[0]));
   });
 
-  // Chat command handler (request/response)
-  ipcMain.handle(IpcChannel.CHAT_SEND, async (_event, text: string) => {
-    return await agentService.processChatCommand(text);
-  });
-
-  // Answer to a tool confirmation prompt
-  ipcMain.handle(
-    IpcChannel.AGENT_CONFIRM_RESPONSE,
-    (_event, id: string, approved: boolean) => {
-      agentService.resolveConfirm(id, approved);
-    }
+  ipcMain.handle(IpcChannel.DECK_LOAD_FROM_POWERPOINT, () =>
+    loadDeck(() => presentation.loadDeckFromPowerPoint()),
   );
 
-  // ── Connectors ─────────────────────────────────────────────────────────────
-
-  ipcMain.handle(IpcChannel.CONNECTORS_LIST, () => connectorManager.list());
-
-  // Open a service's login page in a visible window. The agent's own browser
-  // must release the shared profile first — only one Chromium can hold it.
-  ipcMain.handle(
-    IpcChannel.CONNECTOR_OPEN_LOGIN,
-    async (_event, idOrUrl: string) => {
-      const connector = connectorManager.resolve(idOrUrl);
-      if (!connector) {
-        return { ok: false, error: `Not a valid service or URL: "${idOrUrl}"` };
-      }
-      try {
-        await agentService.shutdownBrowser();
-        await loginBrowser.open(connector.homeUrl);
-        return { ok: true, connector };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    }
-  );
-
-  // User finished logging in. Close the window to flush the session to disk,
-  // then record the connector as connected.
-  ipcMain.handle(
-    IpcChannel.CONNECTOR_MARK_CONNECTED,
-    async (_event, id: string) => {
-      await loginBrowser.close();
-      connectorManager.markConnected(id);
-      return connectorManager.list();
-    }
-  );
-
-  ipcMain.handle(IpcChannel.CONNECTOR_DISCONNECT, (_event, id: string) => {
-    connectorManager.disconnect(id);
-    return connectorManager.list();
+  ipcMain.handle(IpcChannel.DECK_LIST, () => presentation.listDecks());
+  ipcMain.handle(IpcChannel.DECK_GET, (_event, id: string) => presentation.getDeck(id));
+  ipcMain.handle(IpcChannel.DECK_ACTIVATE, (_event, id: string) => {
+    presentation.activateDeck(id);
+    return presentation.listDecks();
+  });
+  ipcMain.handle(IpcChannel.DECK_DELETE, (_event, id: string) => {
+    presentation.deleteDeck(id);
+    return presentation.listDecks();
+  });
+  ipcMain.handle(IpcChannel.DECK_PREPARE, (_event, id: string) => {
+    void presentation.prepareDeck(id);
   });
 
-  // Browser agent handlers
-  ipcMain.handle(IpcChannel.BROWSER_TASK_CANCEL, () => {
-    agentService.cancelBrowserTask();
+  ipcMain.handle(IpcChannel.QA_LOG_GET, () => presentation.getLog());
+  ipcMain.handle(IpcChannel.QA_LOG_CLEAR, () => presentation.clearLog());
+
+  ipcMain.handle(IpcChannel.SPEAK, (_event, text: string) => send(widgetWindow, IpcChannel.SPEAK, text));
+  ipcMain.handle(IpcChannel.STOP_SPEAKING, () => send(widgetWindow, IpcChannel.STOP_SPEAKING));
+  ipcMain.handle(IpcChannel.ANSWER_CARD_HIDE, () => {
+    if (answerWindow && !answerWindow.isDestroyed()) answerWindow.hide();
   });
 
-  ipcMain.handle(IpcChannel.BROWSER_TASK_LOGIN_COMPLETE, (_event, taskId: string) => {
-    // For MVP, log the signal — full login resume is handled by BrowserAgent's session persistence
-    console.log('[BrowserAgent] Login complete signal received for task:', taskId);
+  ipcMain.handle(IpcChannel.OPEN_EXTERNAL, (_event, url: string) => {
+    // Only web links — never file:// or app protocols from model output.
+    if (/^https?:\/\//i.test(String(url))) void shell.openExternal(url);
   });
 
   // Download model handler
@@ -898,165 +769,72 @@ function setupIPC(): void {
   });
 }
 
+/** Loads a deck and reports the outcome in a shape the dashboard can show. */
+async function loadDeck(load: () => Promise<{ id: string; name: string; slides: unknown[] }>) {
+  try {
+    const deck = await load();
+    toast(`Loaded "${deck.name}" (${deck.slides.length} slides). Preparing questions…`);
+    return { ok: true, deckId: deck.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    safeError('[Deck] load failed:', message);
+    return { ok: false, error: message };
+  }
+}
+
 // ── App Lifecycle ───────────────────────────────────────────────────────────
 
-// Prevent multiple instances — if a second instance launches, focus the existing one
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // Someone tried to launch a second instance — show the dashboard
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.show();
-      dashboardWindow.focus();
-    } else if (widgetWindow && !widgetWindow.isDestroyed()) {
-      widgetWindow.show();
-    }
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) showDashboard();
+    else if (widgetWindow && !widgetWindow.isDestroyed()) widgetWindow.show();
   });
 
   app.whenReady().then(() => {
-    // Grant microphone permission automatically
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      if (permission === 'media') {
-        callback(true);
-      } else {
-        callback(true);
-      }
+    // The microphone is the only permission Flick's windows ask for.
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(permission === 'media');
     });
 
     setupIPC();
-
-    // Initialize agent from saved settings
-    const savedAgentEnabled = settingsStore.get('aiAgentEnabled');
-    if (savedAgentEnabled) {
-      agentService.setEnabled(true);
-    }
-
-    // Seed LLM provider keys from settings
-    const openaiKey = settingsStore.get('openaiApiKey');
-    const geminiKey = settingsStore.get('geminiApiKey');
-    const deepseekKey = settingsStore.get('deepseekApiKey');
-    const anthropicKey = settingsStore.get('anthropicApiKey');
-    const qwenKey = settingsStore.get('qwenApiKey');
-    if (openaiKey) agentService.setProviderApiKey('openai', openaiKey);
-    if (geminiKey) agentService.setProviderApiKey('gemini', geminiKey);
-    if (deepseekKey) agentService.setProviderApiKey('deepseek', deepseekKey);
-    if (anthropicKey) agentService.setProviderApiKey('anthropic', anthropicKey);
-    if (qwenKey) agentService.setProviderApiKey('qwen', qwenKey);
-    // Seed active selection if persisted
-    const savedProvider = settingsStore.get('llmProvider');
-    const savedModel = settingsStore.get('llmModel');
-    if (savedProvider && savedModel) {
-      agentService.setActiveSelection(savedProvider as ProviderId, savedModel);
-    }
-
-    // Set up browser agent notifier and config
-    agentService.setupBrowserNotifier({
-      sendProgress: (progress) => {
-        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-          dashboardWindow.webContents.send(IpcChannel.BROWSER_TASK_PROGRESS, progress);
-        }
-      },
-      sendResult: (result) => {
-        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-          dashboardWindow.webContents.send(IpcChannel.BROWSER_TASK_RESULT, result);
-        }
-      },
-      sendLoginRequired: (taskId, url) => {
-        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-          dashboardWindow.webContents.send(IpcChannel.BROWSER_TASK_LOGIN_REQUIRED, { taskId, url });
-        }
-      },
-      sendToast: (toast) => {
-        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-          dashboardWindow.webContents.send(IpcChannel.AGENT_TOAST, toast);
-        }
-      },
-    });
-
-    // Pass initial browser config (headless setting)
-    agentService.setBrowserConfig({ headless: settingsStore.get('browserAgentHeadless'), userDataDir: getBrowserDataDir() });
-    // Before any browser task, close a connector login window if one is open —
-    // both use the same profile, and only one Chromium can hold it at a time.
-    agentService.setBeforeBrowserTask(() => loginBrowser.close());
+    applyLlmSettings();
 
     widgetWindow = createFloatingWidget();
+    if (!settingsStore.get('showFloatingWidget')) widgetWindow.hide();
+    answerWindow = createAnswerWindow();
     tray = initTray();
+    registerGlobalHotkey(settingsStore.get('hotkeyAccelerator'));
 
-    const hotkey = settingsStore.get('hotkeyAccelerator');
-    registerGlobalHotkey(hotkey);
-
-    // Which file the settings actually came from, and whether the store agrees
-    // with it. A run once reported values that contradicted the file on disk,
-    // which means the store and the file had diverged.
     safeLog(`[Startup] settings file: ${settingsStore.path}`);
     safeLog(`[Startup] userData: ${app.getPath('userData')}`);
-    try {
-      const raw = fs.readFileSync(settingsStore.path, 'utf8');
-      const onDisk = JSON.parse(raw) as Partial<Settings>;
-      safeLog(
-        `[Startup] on disk : onboardingComplete=${onDisk.onboardingComplete} modelCacheDir=${JSON.stringify(onDisk.modelCacheDir)}`,
-      );
-      safeLog(
-        `[Startup] in store: onboardingComplete=${settingsStore.get('onboardingComplete')} modelCacheDir=${JSON.stringify(settingsStore.get('modelCacheDir'))}`,
-      );
-      if (onDisk.modelCacheDir !== settingsStore.get('modelCacheDir')) {
-        safeError(
-          '[Startup] MISMATCH: the settings store disagrees with the file on disk.',
-        );
-      }
-    } catch (err) {
-      safeError('[Startup] could not read settings file directly:', err);
-    }
 
-    // Show onboarding on first launch — or any time the model is missing.
-    //
-    // "Onboarding finished" and "a model is on disk" are independent facts,
-    // and the download only ever happens during onboarding. Treating the flag
-    // as proof a model exists strands the user: the dashboard opens, voice
-    // silently never works, and no UI path exists to fetch a model. Deleting
-    // the model store, selecting a model that was never downloaded, or moving
-    // the model directory all produce exactly that state.
+    // Show onboarding on first launch, or whenever the Whisper model is
+    // missing — the model download only happens during onboarding.
     const onboardingDone = settingsStore.get('onboardingComplete');
     const wantedModel = resolveModelId(settingsStore.get('modelName'));
     const modelReady = WhisperService.isModelReady(getModelCacheDir(), wantedModel);
-
-    safeLog(
-      `[Startup] onboardingComplete=${onboardingDone} modelReady=${modelReady} (${wantedModel})`,
-    );
-    const modelDirChoice = getConfiguredModelDir();
-    safeLog(
-      `[Startup] models will go to ${getModelCacheDir()} (source: ${modelDirChoice.source})`,
-    );
+    safeLog(`[Startup] onboardingComplete=${onboardingDone} modelReady=${modelReady} (${wantedModel})`);
 
     if (!onboardingDone || !modelReady) {
-      if (onboardingDone) {
-        safeLog('[Startup] setup was complete but no model is present — re-running setup');
-      }
       onboardingWindow = createOnboardingWindow();
       onboardingWindow.show();
       onboardingWindow.focus();
-      safeLog('[Startup] onboarding window opened');
     } else {
-      // Create dashboard window when onboarding is already complete
       dashboardWindow = createDashboardWindow();
-      dashboardWindow.once('ready-to-show', () =>
-        safeLog('[Startup] dashboard window shown'),
-      );
     }
   });
 }
 
 app.on('window-all-closed', () => {
-  // Don't quit — keep running in tray
+  // Don't quit — keep running in the tray.
 });
 
 app.on('before-quit', () => {
   isQuitting = true;
-  agentService.shutdownBrowser();
-  void loginBrowser.close();
 });
 
 app.on('will-quit', () => {
@@ -1065,9 +843,5 @@ app.on('will-quit', () => {
 });
 
 app.on('activate', () => {
-  // macOS: re-show widget when dock icon is clicked
-  if (widgetWindow && !widgetWindow.isVisible()) {
-    widgetWindow.show();
-  }
+  if (widgetWindow && !widgetWindow.isVisible()) widgetWindow.show();
 });
-

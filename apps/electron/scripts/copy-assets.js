@@ -5,7 +5,7 @@ const copies = [
   ['src/renderer/widget/widget.html', 'build/renderer/widget/widget.html'],
   ['src/renderer/onboarding/onboarding.html', 'build/renderer/onboarding/onboarding.html'],
   ['src/renderer/dashboard/dashboard.html', 'build/renderer/dashboard/dashboard.html'],
-  ['src/renderer/recorder/recorder.html', 'build/renderer/recorder/recorder.html'],
+  ['src/renderer/answer/answer.html', 'build/renderer/answer/answer.html'],
   ['src/renderer/audio/vad-processor.js', 'build/renderer/audio/vad-processor.js'],
 ];
 

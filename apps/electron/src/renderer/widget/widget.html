@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Voice to Text</title>
+  <title>Flick</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 160px; height: 48px; overflow: hidden; background: transparent; font-family: -apple-system, sans-serif; -webkit-app-region: drag; }
@@ -38,10 +38,7 @@
   </div>
 </div>
 <script>
-const { clipboard } = require('electron');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { ipcRenderer } = require('electron');
 
 const w = document.getElementById('w');
 const els = { mic:document.getElementById('mic'), bars:document.getElementById('bars'), sq:document.getElementById('sq'), sp:document.getElementById('sp'), chk:document.getElementById('chk') };
@@ -75,6 +72,8 @@ function stopRecognition() {
 
 async function startRec() {
   if (state !== 'idle') return;
+  // The presenter is asking something new: stop any answer still being read.
+  stopSpeaking();
   go('recording');
   chunks = [];
   speechResult = '';
@@ -158,12 +157,22 @@ function tick() {
 function finishWithText(text) {
   cleanup();
   stopRecognition();
-  if (text) {
-    clipboard.writeText(text);
-    console.log('[Widget] Copied:', text);
+  askFlick(text);
+}
+
+// Hands the question to Flick. The answer arrives on the answer card (and is
+// spoken through 'speak' below); the widget only shows progress.
+async function askFlick(text) {
+  if (!text) { go('idle'); return; }
+  go('processing');
+  try {
+    const answer = await ipcRenderer.invoke('ask', text);
+    go(answer ? 'done' : 'idle');
+    if (answer) setTimeout(() => go('idle'), 1500);
+  } catch (e) {
+    console.error('[Widget] ask failed:', e);
+    go('idle');
   }
-  go('done');
-  setTimeout(() => go('idle'), 1500);
 }
 
 async function stopAndTranscribe() {
@@ -197,22 +206,17 @@ async function stopAndTranscribe() {
   }
 
   const wav = encodeWav(samples, 16000);
-  const tmpFile = path.join(os.tmpdir(), 'vtt-' + Date.now() + '.wav');
-  fs.writeFileSync(tmpFile, Buffer.from(wav));
 
+  let text = '';
   try {
-    const { ipcRenderer } = require('electron');
     const result = await ipcRenderer.invoke('transcribe', wav);
-    const text = (result && result.text) ? result.text.trim() : '';
-    if (text) { clipboard.writeText(text); console.log('[Widget] Whisper copied:', text); }
-    go('done');
-    setTimeout(() => go('idle'), 1500);
+    text = (result && result.text) ? result.text.trim() : '';
   } catch(e) {
     console.error('[Widget] Whisper error:', e);
     go('idle');
-  } finally {
-    try { fs.unlinkSync(tmpFile); } catch(e) {}
+    return;
   }
+  await askFlick(text);
 }
 
 function encodeWav(samples, sr) {
@@ -235,7 +239,7 @@ w.addEventListener('click', () => {
 });
 w.addEventListener('contextmenu', e => e.preventDefault());
 
-const { ipcRenderer: ipc2 } = require('electron');
+const ipc2 = ipcRenderer;
 ipc2.on('toggle-recording', () => {
   if (state === 'idle') startRec();
   else if (state === 'recording') stopAndTranscribe();
@@ -250,27 +254,56 @@ ipc2.on('stop-recording', () => {
 // Flick speaks. The widget window is always alive, so it is the reliable place
 // to run speech synthesis. Uses the OS voice via the Web Speech API — offline,
 // no dependency, no API key.
+function pickVoice(text) {
+  var voices = window.speechSynthesis.getVoices();
+  // Answers in Urdu script need an Urdu voice, when Windows has one installed.
+  if (/[\u0600-\u06FF]/.test(text)) {
+    var ur = voices.find(function (v) { return /^ur/i.test(v.lang); });
+    if (ur) return ur;
+  }
+  // Otherwise prefer a female English voice to match Flick's persona.
+  return voices.find(function (v) {
+    return /en/i.test(v.lang) && /female|zira|aria|jenny|hazel/i.test(v.name);
+  }) || voices.find(function (v) { return /en/i.test(v.lang); }) || null;
+}
+
+// Long text (a slide explanation runs about a minute) is queued sentence by
+// sentence: Chromium can cut a single long utterance off part-way.
+function speechChunks(text) {
+  var sentences = String(text).match(/[^.!?\u061F\u06D4]+[.!?\u061F\u06D4]*\s*/g) || [String(text)];
+  var chunks = [], current = '';
+  sentences.forEach(function (s) {
+    if ((current + s).length > 220 && current) { chunks.push(current); current = ''; }
+    current += s;
+  });
+  if (current.trim()) chunks.push(current);
+  return chunks;
+}
+
 function flickSpeak(text) {
   try {
     if (!text || !window.speechSynthesis) return;
     // Cancel anything mid-sentence so replies do not pile up.
     window.speechSynthesis.cancel();
-    var u = new SpeechSynthesisUtterance(String(text));
-    u.rate = 1.0;
-    u.pitch = 1.0;
-    // Prefer a female English voice to match the persona, if one exists.
-    var voices = window.speechSynthesis.getVoices();
-    var preferred = voices.find(function (v) {
-      return /en/i.test(v.lang) && /female|zira|aria|jenny|hazel/i.test(v.name);
-    }) || voices.find(function (v) { return /en/i.test(v.lang); });
-    if (preferred) u.voice = preferred;
-    window.speechSynthesis.speak(u);
+    var voice = pickVoice(text);
+    speechChunks(text).forEach(function (chunk) {
+      var u = new SpeechSynthesisUtterance(chunk.trim());
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      if (voice) u.voice = voice;
+      window.speechSynthesis.speak(u);
+    });
   } catch (e) {
     // Speech is a nicety; never let it break the widget.
   }
 }
 
-ipc2.on('agent-speak', function (_e, text) { flickSpeak(text); });
+function stopSpeaking() {
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+}
+
+ipc2.on('speak', function (_e, text) { flickSpeak(text); });
+ipc2.on('stop-speaking', function () { stopSpeaking(); });
 </script>
 </body>
 </html>

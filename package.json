@@ -1,8 +1,8 @@
 {
-  "name": "voice-to-text",
+  "name": "flick",
   "version": "1.0.0",
   "private": true,
-  "description": "Local voice-to-text using OpenAI's Whisper model. Desktop app (Electron) with floating widget + web app.",
+  "description": "Flick: a voice assistant that answers audience questions during presentations, from your slides or the web.",
   "scripts": {
     "setup": "cd apps/electron && npm install && cd ../.. && cd apps/desktop && npm install",
     "dev:electron": "cd apps/electron && npm run dev",

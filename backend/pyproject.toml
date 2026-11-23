@@ -1,0 +1,9 @@
+[project]
+name = "flick-backend"
+version = "0.2.0"
+description = "Flick's AI backend: reads slides, prepares questions and answers audience questions live."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

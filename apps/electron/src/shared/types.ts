@@ -1,12 +1,3 @@
-/**
- * Language of a spoken utterance.
- *
- * 'roman-ur' is Urdu written in Latin script ("chrome open karo") — how
- * Pakistani students most often speak to a computer. 'mixed' is Urdu script
- * combined with Latin words in one utterance.
- */
-export type LanguageHint = 'en' | 'ur' | 'roman-ur' | 'mixed';
-
 export interface Settings {
   hotkeyAccelerator: string;
   hotkeyMode: 'toggle' | 'push-to-talk';
@@ -17,32 +8,32 @@ export interface Settings {
    * drive is often the wrong place for them.
    */
   modelCacheDir: string;
-  /** Absolute directory for the browser profile. Empty = default location. */
-  browserDataDir: string;
   language: string;
-  autoCopyToClipboard: boolean;
   showFloatingWidget: boolean;
   launchAtStartup: boolean;
   silenceDurationMs: number;
   widgetPosition: { x: number; y: number } | null;
   onboardingComplete: boolean;
-  aiAgentEnabled: boolean;
   openaiApiKey: string;
   geminiApiKey: string;
   deepseekApiKey: string;
   anthropicApiKey: string;
   qwenApiKey: string;
+  /**
+   * Tavily search key. Only needed when the chosen AI provider has no built-in
+   * web search (everything except Claude).
+   */
+  tavilyApiKey: string;
   llmProvider: string;
   llmModel: string;
-  browserAgentHeadless: boolean;
-}
-
-export interface TranscriptEntry {
-  id: string;
-  text: string;
-  timestamp: number;
-  durationMs: number;
-  modelName: string;
+  /**
+   * 'speak': Flick reads every answer aloud to the room.
+   * 'private': the answer only appears on the presenter's screen, so they can
+   * answer in their own words (there is still a Speak button on the card).
+   */
+  answerMode: 'speak' | 'private';
+  /** Global shortcut that makes Flick explain the slide on screen, without speaking a command. */
+  explainHotkey: string;
 }
 
 export interface TranscriptionResult {
@@ -82,45 +73,11 @@ export interface TranscriptionStatusMessage {
 
 export type DownloadProgressMessage = DownloadProgress;
 
-// Renderer → Main message types
-export interface TranscribeRequest {
-  wavBuffer: ArrayBuffer;
-}
-
 export type SettingsUpdateRequest = Partial<Settings>;
 
 export interface WidgetPositionRequest {
   x: number;
   y: number;
-}
-
-// ── AI Agent Types ──────────────────────────────────────────────────────────
-
-export type ActionType =
-  | 'open_application'
-  | 'open_url'
-  | 'type_text'
-  | 'web_search'
-  | 'open_path'
-  | 'system_control'
-  | 'browser_task';
-
-export interface ClassifiedIntent {
-  action: ActionType;
-  target: string;
-  confidence: number;
-  parameters?: Record<string, unknown>;
-}
-
-export interface ActionLogEntry {
-  id: string;
-  timestamp: number;
-  commandText: string;
-  intentType: ActionType;
-  target: string;
-  status: 'success' | 'error';
-  errorMessage?: string;
-  durationMs: number;
 }
 
 export interface ToastMessage {
@@ -129,133 +86,90 @@ export interface ToastMessage {
   autoDismissMs: number;
 }
 
-export interface AgentResult {
-  handled: boolean;
-  action?: ActionLogEntry;
-  error?: string;
+// ── Presentation types ─────────────────────────────────────────────────────
+
+/** One slide's text, as extracted from the .pptx. Numbers are 1-based. */
+export interface Slide {
+  number: number;
+  title: string;
+  /** Body text, one line per paragraph, title excluded. */
+  body: string;
+  /** Speaker notes — often where the presenter keeps the real explanation. */
+  notes: string;
 }
 
-// ── Chat Types ──────────────────────────────────────────────────────────────
-
-export type ChatRole = 'user' | 'agent';
-
-export type ChatResponseStatus =
-  | 'success'
-  | 'error'
-  | 'not_command'
-  | 'low_confidence'
-  | 'disabled';
-
-export interface ChatResponse {
-  status: ChatResponseStatus;
-  message: string;
-  actionType?: string;
+/** A question Flick expects the audience to ask, prepared before the talk. */
+export interface PredictedQuestion {
+  id: string;
+  /** Slide the question is about; 0 for the talk as a whole. */
+  slide: number;
+  question: string;
+  answer: string;
 }
 
-export interface ChatMessage {
-  role: ChatRole;
-  text: string;
-  timestamp: number;
+export type PrepStatus = 'idle' | 'preparing' | 'ready' | 'error';
+
+export interface Deck {
+  id: string;
+  /** File name without the folder, e.g. "Lecture 4 - Neural Nets.pptx". */
+  name: string;
+  /** Where the file was loaded from, so it can be re-read after edits. */
+  filePath: string;
+  loadedAt: number;
+  slides: Slide[];
+  predicted: PredictedQuestion[];
+  prepStatus: PrepStatus;
+  prepError?: string;
 }
 
-export interface DetectionResult {
-  isCommand: boolean;
-  confidence: number;
-  matchedPattern?: string;
-  language: LanguageHint;
+/** Deck summary for lists — the full slide text stays in the main process. */
+export interface DeckSummary {
+  id: string;
+  name: string;
+  loadedAt: number;
+  slideCount: number;
+  questionCount: number;
+  prepStatus: PrepStatus;
+  prepError?: string;
+  active: boolean;
 }
 
-export interface ClassificationError {
-  type: 'timeout' | 'network' | 'invalid_key' | 'api_error' | 'parse_error';
-  message: string;
-  httpStatus?: number;
+export interface WebSourceRef {
+  title: string;
+  url: string;
 }
 
-export type ClassificationResult =
-  | { success: true; intent: ClassifiedIntent }
-  | { success: false; error: ClassificationError };
+/**
+ * Where an answer came from — shown on the answer card so the presenter knows
+ * how much to trust it before repeating it.
+ */
+export type AnswerOrigin =
+  | 'prepared' // matched a question predicted before the talk
+  | 'slides' // answered from the deck's content
+  | 'web' // the deck did not cover it, so Flick searched the web
+  | 'general' // no deck coverage and no web search available
+  | 'explain' // the presenter asked Flick to explain a slide to the audience
+  | 'greeting'
+  | 'error';
 
-export interface ExecutionResult {
-  success: boolean;
-  action: ActionType;
-  target: string;
-  error?: string;
+export interface AnswerPayload {
+  id: string;
+  question: string;
+  answer: string;
+  origin: AnswerOrigin;
+  sources: WebSourceRef[];
+  /** Slide on screen when the question was asked, when PowerPoint reported one. */
+  currentSlide: number | null;
   durationMs: number;
-}
-
-// ── Browser Agent Types ─────────────────────────────────────────────────────
-
-export type BrowserActionType =
-  | 'navigate_to_url'
-  | 'click_element'
-  | 'type_into_element'
-  | 'scroll_page'
-  | 'read_page_content'
-  | 'take_screenshot'
-  | 'wait_for_load'
-  | 'task_complete'
-  | 'task_failed';
-
-export interface BrowserAction {
-  type: BrowserActionType;
-  target?: string;
-  value?: string;
-  description: string;
-}
-
-export interface BrowserTaskRequest {
-  command: string;
-  taskId: string;
-}
-
-export interface BrowserTaskResult {
-  taskId: string;
-  status: 'completed' | 'cancelled' | 'failed' | 'partial';
-  result?: string;
-  structuredData?: Record<string, unknown>;
-  stepsCompleted: number;
-  error?: string;
-  confidence?: number;
-}
-
-export interface BrowserAgentConfig {
-  userDataDir: string;
-  headless: boolean;
-  viewport: { width: number; height: number };
-  maxSteps: number;
-}
-
-export interface ReactStep {
-  stepNumber: number;
-  action: BrowserAction;
-  observation: string;
-  screenshot?: string;
   timestamp: number;
+  /** Whether this answer should be read aloud now. */
+  speak: boolean;
 }
 
-export type ReactLoopStatus = 'planning' | 'acting' | 'observing' | 'deciding' | 'complete' | 'failed';
-
-export interface BrowserTaskProgressMessage {
-  taskId: string;
-  stepNumber: number;
-  totalStepsLimit: number;
-  action: string;
-  description: string;
-  status: ReactLoopStatus;
-  thumbnail?: string;
-}
-
-export interface BrowserTaskNotifier {
-  sendProgress(progress: BrowserTaskProgressMessage): void;
-  sendResult(result: BrowserTaskResult): void;
-  sendLoginRequired(taskId: string, url: string): void;
-  sendToast(message: ToastMessage): void;
-}
-
-export interface AnalysisResult {
-  action: BrowserAction;
-  reasoning: string;
-  isTaskComplete: boolean;
-  extractedData?: string;
-  confidence: number;
+export interface PrepProgress {
+  deckId: string;
+  status: PrepStatus;
+  done: number;
+  total: number;
+  message?: string;
 }
