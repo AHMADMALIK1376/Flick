@@ -1,0 +1,10 @@
+body {
+  background: #f1eff6;
+  color: #2a2440;
+}
+
+/* Windows without the sidebar (answer card, mic, presenter view) */
+.window-transparent body,
+body.window-transparent {
+  background: transparent;
+}
