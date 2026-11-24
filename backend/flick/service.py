@@ -28,6 +28,7 @@ from .events import EventBus
 from .llm import LLM, LLMError
 from .models import Answer, Deck, PredictedQuestion, PrepProgress
 from .powerpoint import PowerPointBridge
+from .presenter import Presenter
 from .pptx_reader import read_pptx
 from .semantic import Embedder, best_semantic_match, to_blob
 from .text import (
@@ -36,10 +37,14 @@ from .text import (
     is_bare_address,
     is_nothing_heard,
     is_plain_explain_request,
+    parse_present_command,
     parse_slide_command,
 )
 from .transcribe import Transcriber
+from .voice import Speaker, can_voice, split_sentences
 
+#: Said while Flick searches the web, so the room isn't silent.
+ONE_MOMENT = "One moment, let me check."
 #: Earlier questions given to Claude so follow-ups ("explain that again") make sense.
 RECENT_FOR_CONTEXT = 3
 #: Older questions are a different conversation, not context.
@@ -59,6 +64,7 @@ class FlickService:
         events: EventBus,
         embedder: Optional[Embedder] = None,
         transcriber: Optional[Transcriber] = None,
+        speaker: Optional[Speaker] = None,
     ):
         self.db = db
         self.llm = llm
@@ -66,6 +72,8 @@ class FlickService:
         self.events = events
         self.embedder = embedder
         self.transcriber = transcriber
+        self.speaker = speaker
+        self.presenter = Presenter(self)
         self._preparing: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
 
@@ -81,7 +89,15 @@ class FlickService:
             jobs.append(asyncio.to_thread(self.transcriber.load, self.db.get_settings().speech_model))
         if self.embedder and hasattr(self.embedder, "load"):
             jobs.append(self._load_embedder_and_index())
+        if self.speaker:
+            jobs.append(self._load_voice())
         await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def _load_voice(self) -> None:
+        await asyncio.to_thread(self.speaker.voice.load)  # type: ignore[union-attr]
+        deck = self.active_deck()
+        if deck:
+            self._prevoice(deck.id)
 
     async def _load_embedder_and_index(self) -> None:
         await asyncio.to_thread(self.embedder.load)  # type: ignore[union-attr]
@@ -166,6 +182,7 @@ class FlickService:
 
             await engine.prepare_explanations(self.llm, deck.name, deck.slides, on_explained)
             self.db.set_prep_status(deck_id, "ready")
+            self._prevoice(deck_id)
             progress(
                 total,
                 "ready",
@@ -209,8 +226,14 @@ class FlickService:
     # ── Live questions ──────────────────────────────────────────────────────
 
     def question_starting(self) -> None:
-        """Called when the presenter starts speaking: look up the slide early."""
+        """Called when someone starts asking (mic / hotkey): look up the slide early, and
+        stop talking. While presenting this is a raised hand: Flick pauses and continues
+        by itself once the question is answered."""
         self.bridge.prefetch_slide()
+        if self.presenter.state in ("presenting", "starting"):
+            self.presenter.pause("question")
+        elif self.speaker:
+            self.speaker.stop()
 
     async def transcribe(self, audio: bytes) -> tuple[str, int]:
         if self.transcriber is None:
@@ -224,6 +247,14 @@ class FlickService:
 
     async def ask(self, raw: str) -> Optional[Answer]:
         """Answers a spoken or typed question. None when nothing was heard."""
+        try:
+            return await self._ask(raw)
+        finally:
+            # A raised hand during the talk: continue once the answer has been said.
+            if self.presenter.paused_for == "question":
+                self._background(self.presenter.question_answered())
+
+    async def _ask(self, raw: str) -> Optional[Answer]:
         if is_nothing_heard(raw):
             return None
         started = time.time()
@@ -241,25 +272,40 @@ class FlickService:
             return answer
 
         question = clean_question(raw)
+        present = parse_present_command(question, self.presenter.active)
+        if present:
+            return self._present_command(present, question, started)
         command = parse_slide_command(question)
         if command:
             return await self.explain_slide(command, question)
 
+        # A question during the talk (typed, or asked without the hotkey) also pauses it.
+        if self.presenter.state in ("presenting", "starting"):
+            self.presenter.pause("question")
+        elif self.speaker:
+            self.speaker.stop()
+
         answer_id = str(uuid.uuid4())
         speak = self.db.get_settings().answer_mode == "speak"
+        voice_on = speak and self._natural_voice()
+        voiced_any = False
         self.events.publish("thinking", {"id": answer_id, "question": question})
         deck = self.active_deck()
         current_slide = await self.bridge.current_slide() if deck else None
         streamed = False
 
         async def on_text(sentence: str) -> None:
-            nonlocal streamed
+            nonlocal streamed, voiced_any
             streamed = True
-            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": speak})
+            voiced = voice_on and self._say(sentence)
+            voiced_any = voiced_any or voiced
+            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": speak, "voiced": voiced})
 
         async def on_search() -> None:
             # "One moment, let me check" — only if nothing has been said yet.
-            self.events.publish("searching", {"id": answer_id, "speak": speak and not streamed})
+            say_it = speak and not streamed
+            voiced = say_it and voice_on and self._say(ONE_MOMENT)
+            self.events.publish("searching", {"id": answer_id, "speak": say_it, "voiced": voiced})
 
         try:
             result = await engine.answer_question(
@@ -276,10 +322,11 @@ class FlickService:
                 timestamp=started,
                 speak=speak,
                 streamed=streamed,
+                voiced=voiced_any,
             )
         except LLMError as err:
             answer = self._error(question, _friendly(err), current_slide, started, answer_id)
-        return self._finish(answer, deck)
+        return self._finish(answer, deck, voice=voice_on)
 
     async def explain_slide(
         self, target: SlideTarget = SlideTarget("current"), request: str = "Explain this slide to the audience."
@@ -321,6 +368,9 @@ class FlickService:
 
         # Written before the talk: starts at once.
         ready = self.db.get_explanation(deck.id, number) if is_plain_explain_request(request) else None
+        voice_on = self._natural_voice()
+        if self.speaker and not self.presenter.active:
+            self.speaker.stop()
         if ready:
             return self._finish(
                 Answer(
@@ -334,16 +384,21 @@ class FlickService:
                     speak=True,
                 ),
                 deck,
+                voice=voice_on,
             )
 
         # Not ready yet, or a special request ("in Urdu", "in simple words"): write it now, streamed.
         self.events.publish("thinking", {"id": answer_id, "question": label})
         streamed = False
 
+        voiced_any = False
+
         async def on_text(sentence: str) -> None:
-            nonlocal streamed
+            nonlocal streamed, voiced_any
             streamed = True
-            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": True})
+            voiced = voice_on and self._say(sentence)
+            voiced_any = voiced_any or voiced
+            self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": True, "voiced": voiced})
 
         try:
             text = await engine.explain_slide(self.llm, deck, number, request, on_text)
@@ -360,8 +415,10 @@ class FlickService:
                 timestamp=started,
                 speak=True,
                 streamed=streamed,
+                voiced=voiced_any,
             ),
             deck,
+            voice=voice_on,
         )
 
     # ── Internals ───────────────────────────────────────────────────────────
@@ -386,10 +443,109 @@ class FlickService:
             speak=False,
         )
 
-    def _finish(self, answer: Answer, deck: Optional[Deck]) -> Answer:
+    def _finish(self, answer: Answer, deck: Optional[Deck], voice: bool = False) -> Answer:
+        # Prepared answers and ready explanations arrive whole: say them now (never errors).
+        if (
+            voice
+            and answer.speak
+            and not answer.streamed
+            and answer.origin not in ("error", "greeting")
+            and can_voice(answer.answer)
+        ):
+            for sentence in split_sentences(answer.answer):
+                self._say(sentence)
+            answer.voiced = True
         self.db.add_log(answer, deck.id if deck else None)
         self.events.publish("answer", answer.model_dump())
         return answer
+
+    # ── Voice ───────────────────────────────────────────────────────────────
+
+    def _natural_voice(self) -> bool:
+        """Flick's own voice is on and loaded (otherwise the screens use the Windows voice)."""
+        return bool(self.speaker and self.speaker.available() and self.db.get_settings().voice == "natural")
+
+    def _say(self, text: str) -> bool:
+        """Queues a sentence in Flick's voice. False if this text can't be voiced (e.g. Urdu script)."""
+        if not self.speaker or not can_voice(text):
+            return False
+        self.speaker.say(text)
+        return True
+
+    def voice_status(self) -> dict:
+        voice = getattr(self.speaker, "voice", None)
+        return {
+            "ready": bool(self.speaker and self.speaker.available()),
+            "error": getattr(voice, "error", None),
+            "downloading": bool(getattr(voice, "downloading", False)),
+        }
+
+    def _prevoice(self, deck_id: str) -> None:
+        """Makes audio ahead of time, so it plays at once: every slide explanation first
+        (presenting), then every prepared answer (questions). Uses the spare queue only."""
+        if not self._natural_voice():
+            return
+        for text in self.db.get_explanations(deck_id).values():
+            self.speaker.prefetch(split_sentences(text))  # type: ignore[union-attr]
+        deck = self.db.get_deck(deck_id)
+        for q in deck.predicted if deck else []:
+            self.speaker.prefetch(split_sentences(q.answer))  # type: ignore[union-attr]
+
+    # ── Presenting ("Flick, present this for me") ───────────────────────────
+
+    async def slide_explanation(self, deck: Deck, number: int) -> str:
+        """The spoken explanation of a slide: written before the talk, or now if missing."""
+        ready = self.db.get_explanation(deck.id, number)
+        if ready:
+            return ready
+        try:
+            text = await engine.explain_slide(self.llm, deck, number, "Explain this slide to the audience.")
+        except LLMError:
+            slide = next((s for s in deck.slides if s.number == number), None)
+            return f"Let's look at {slide.title}." if slide and slide.title else ""
+        if text.strip():
+            self.db.save_explanations(deck.id, {number: text})
+        return text
+
+    def start_presenting(self, from_slide: Optional[int] = None) -> dict:
+        deck = self.active_deck()
+        if deck is None or not deck.slides:
+            raise UserError("Load your presentation first, so I know what to present.")
+        if self.db.get_settings().voice != "natural":
+            raise UserError("Presenting needs Flick's natural voice. Turn it on in Settings → Voice.")
+        if not self.speaker or not self.speaker.available():
+            status = self.voice_status()
+            if status["error"]:
+                raise UserError(status["error"])
+            raise UserError("Flick's voice is still getting ready (first start only). Try again in a minute.")
+        self.speaker.stop()
+        self.presenter.start(deck, from_slide or 1)
+        return self.presenter.status()
+
+    def _present_command(self, command: str, question: str, started: float) -> Answer:
+        """Handles "present this", "stop presenting", "continue", "next / previous slide"."""
+        message = {
+            "start": "Starting the presentation.",
+            "stop": "Stopped presenting.",
+            "continue": "Continuing.",
+            "next": "Next slide.",
+            "previous": "Previous slide.",
+        }[command]
+        try:
+            if command == "start":
+                self.start_presenting()
+            elif command == "stop":
+                self.presenter.stop()
+            elif command == "continue":
+                self.presenter.resume()
+            else:
+                self.presenter.go(1 if command == "next" else -1)
+        except UserError as err:
+            return self._finish(self._error(question, str(err), None, started), self.active_deck())
+        # Not a real answer: nothing to show or say.
+        return Answer(
+            id=str(uuid.uuid4()), question=question, answer=message, origin="greeting", timestamp=started, speak=False
+        )
 
     def _background(self, coro) -> None:
         task = asyncio.ensure_future(coro)

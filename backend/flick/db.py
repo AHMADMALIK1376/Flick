@@ -323,6 +323,14 @@ class Database:
             ).fetchone()
         return row["text"] if row else None
 
+    def get_explanations(self, deck_id: str) -> dict[int, str]:
+        """Every slide explanation of a deck, by slide number."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT number, text FROM slide_explanations WHERE deck_id = ? ORDER BY number", (deck_id,)
+            ).fetchall()
+        return {r["number"]: r["text"] for r in rows}
+
     def explanation_count(self, deck_id: str) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM slide_explanations WHERE deck_id = ?", (deck_id,)).fetchone()[0]

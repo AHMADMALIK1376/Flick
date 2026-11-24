@@ -28,6 +28,7 @@ from .models import MODELS, Answer, Deck, DeckSummary, PredictedQuestion, Settin
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
 from .transcribe import TranscriberUnavailable
+from .voice import VOICES
 from .text import SlideTarget
 
 #: Largest .pptx accepted by upload.
@@ -48,6 +49,10 @@ class AskRequest(BaseModel):
 
 class ExplainRequest(BaseModel):
     slide: Optional[int] = None  # None = the slide on screen
+
+
+class PresentRequest(BaseModel):
+    from_slide: Optional[int] = None  # None = from the first slide
 
 
 class PathRequest(BaseModel):
@@ -81,6 +86,9 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
         # now, in the background, so the first question doesn't wait for them.
         service._background(service.warm_up())
         yield
+        if service.speaker:
+            service.presenter.stop()
+            service.speaker.close()
 
     app = FastAPI(title="Flick backend", version=__version__, lifespan=lifespan, default_response_class=UTF8JSONResponse)
     # Renderer pages load from file:// (origin "null") or the Vite dev server.
@@ -132,6 +140,7 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             "meaning_model": {"ready": bool(e and e.ready()), "error": getattr(e, "error", None)},
             "powerpoint": service.bridge.supported,
             "has_api_key": bool(settings.anthropic_api_key),
+            "voice": service.voice_status(),
         }
 
     @app.get("/models", dependencies=auth)
@@ -246,6 +255,59 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     def delete_question(question_id: str):
         if not service.db.delete_question(question_id):
             raise HTTPException(status_code=404, detail="No such question.")
+
+    # ── Presenting: Flick gives the whole talk ───────────────────────────────
+
+    @app.get("/present", dependencies=auth)
+    async def present_status() -> dict:
+        return service.presenter.status()
+
+    @app.post("/present/start", dependencies=auth)
+    async def present_start(req: PresentRequest) -> dict:
+        try:
+            return service.start_presenting(req.from_slide)
+        except UserError as err:
+            raise user_error(err)
+
+    @app.post("/present/pause", dependencies=auth)
+    async def present_pause() -> dict:
+        service.presenter.pause("manual")
+        return service.presenter.status()
+
+    @app.post("/present/resume", dependencies=auth)
+    async def present_resume() -> dict:
+        service.presenter.resume()
+        return service.presenter.status()
+
+    @app.post("/present/next", dependencies=auth)
+    async def present_next() -> dict:
+        service.presenter.go(1)
+        return service.presenter.status()
+
+    @app.post("/present/previous", dependencies=auth)
+    async def present_previous() -> dict:
+        service.presenter.go(-1)
+        return service.presenter.status()
+
+    @app.post("/present/stop", dependencies=auth)
+    async def present_stop() -> dict:
+        service.presenter.stop()
+        return service.presenter.status()
+
+    # ── Voice ───────────────────────────────────────────────────────────────
+
+    @app.get("/voices", dependencies=auth)
+    def voices() -> list[dict]:
+        return [{"id": v, "name": name} for v, name in VOICES]
+
+    @app.post("/voice/test", dependencies=auth, status_code=204)
+    async def voice_test():
+        """Says one sample sentence in the chosen voice."""
+        if not service.speaker or not service.speaker.available():
+            status = service.voice_status()
+            raise HTTPException(status_code=400, detail=status["error"] or "Flick's voice is still getting ready. Try again in a minute.")
+        service.speaker.stop()
+        service.speaker.say("Hi, I'm Flick. This is how I will sound in your class.")
 
     # ── Live ────────────────────────────────────────────────────────────────
 

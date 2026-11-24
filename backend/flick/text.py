@@ -105,3 +105,43 @@ _PLAIN_WORDS = set(
 def is_plain_explain_request(text: str) -> bool:
     words = re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split()
     return all(w in _PLAIN_WORDS or re.fullmatch(r"\d{1,3}(st|nd|rd|th)?", w) for w in words)
+
+
+# ── "Flick, present this for me" ────────────────────────────────────────────
+
+PresentCommand = str  # 'start' | 'stop' | 'continue' | 'next' | 'previous'
+
+_PRESENT_START = re.compile(
+    r"\b(present|give|start|begin|run|deliver|do)\b.{0,25}\b(presentation|talk|lecture|deck|slides|class)\b"
+    r"|\bpresent\b.{0,12}\b(this|it|for me|for us|everything|the whole)\b"
+    r"|\b(presentation|lecture|class)\b.{0,15}\b(do|karo|kar do|dein|de do|shuru)\b"
+    r"|\b(take|teach)\b.{0,10}\b(the class|this class|class)\b"
+)
+_PRESENT_STOP = re.compile(r"\b(stop|end|finish|pause)\b.{0,15}\b(present\w*|talk|lecture)\b|\bstop presenting\b")
+_PRESENT_CONTINUE = re.compile(r"^(please )?(continue|carry on|go on|resume|keep going|go ahead)( please)?$|^(jari|chalo|aage) ")
+_PRESENT_NEXT = re.compile(r"^(go to |move to |show )?(the )?(next|agli|agla) slide( please)?$")
+_PRESENT_PREVIOUS = re.compile(r"^(go (back )?to |move to |show )?(the )?(previous|last|pichli|pichla) slide( please)?$|^go back$")
+
+#: Longer than this, it is a question, not a command.
+MAX_PRESENT_WORDS = 10
+
+
+def parse_present_command(text: str, presenting: bool) -> Optional[PresentCommand]:
+    """
+    "Flick, present this for me" → start. While presenting: "stop presenting",
+    "continue", "next slide", "previous slide". Questions are never commands.
+    """
+    t = " ".join(re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split())
+    t = re.sub(r"^(hey |ok |okay )?flick\s*", "", t).strip()
+    if not t or len(t.split()) > MAX_PRESENT_WORDS or QUESTION_WORDS.search(t) or re.match(r"^(what|how|who|when|where|which|can you explain|is|are|does|do you)\b", t):
+        return None
+    if _PRESENT_STOP.search(t):
+        return "stop" if presenting else None
+    if presenting:
+        if _PRESENT_CONTINUE.search(t):
+            return "continue"
+        if _PRESENT_NEXT.search(t):
+            return "next"
+        if _PRESENT_PREVIOUS.search(t):
+            return "previous"
+    return "start" if _PRESENT_START.search(t) else None

@@ -19,10 +19,12 @@ SOURCES_SHOWN = 3
 #: About a minute of speech is ~200 words; this leaves room without running on.
 EXPLAIN_MAX_TOKENS = 900
 
-SLIDES_PER_BATCH = 6
-QUESTIONS_PER_SLIDE = 3
-PREP_MAX_TOKENS = 3500
-PREP_CONCURRENCY = 2
+SLIDES_PER_BATCH = 4
+#: Questions per slide scale with how dense the slide is (a complex deck gets 100-200 in total).
+MIN_QUESTIONS_PER_SLIDE = 2
+MAX_QUESTIONS_PER_SLIDE = 8
+PREP_MAX_TOKENS = 8000
+PREP_CONCURRENCY = 3
 
 
 @dataclass
@@ -180,7 +182,7 @@ async def predict_questions(
         async with gate:
             try:
                 text = await llm.complete(
-                    prompts.PREP_SYSTEM, prompts.prep_message(deck_name, batch, QUESTIONS_PER_SLIDE), PREP_MAX_TOKENS
+                    prompts.PREP_SYSTEM, prompts.prep_message(deck_name, batch, MIN_QUESTIONS_PER_SLIDE, MAX_QUESTIONS_PER_SLIDE), PREP_MAX_TOKENS
                 )
                 valid = {s.number for s in batch}
                 results[index] = [q for q in parse_prediction(text) if q.slide in valid or q.slide == 0]

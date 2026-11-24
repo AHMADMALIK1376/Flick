@@ -23,11 +23,13 @@ Reply with JSON only, in exactly this shape:
 {"questions":[{"slide":<slide number>,"question":"...","answer":"..."}]}"""
 
 
-def prep_message(deck_name: str, slides: Sequence[Slide], per_slide: int) -> str:
+def prep_message(deck_name: str, slides: Sequence[Slide], min_per_slide: int, max_per_slide: int) -> str:
     return (
         f"Presentation: {deck_name}\n\n"
         + "\n\n".join(format_slide(s) for s in slides)
-        + f"\n\nWrite up to {per_slide} likely audience questions per slide, with answers."
+        + f"\n\nFor each slide, write as many likely audience questions as its content deserves, with answers: "
+        f"{min_per_slide} for a simple slide, up to {max_per_slide} for a dense or complex one. "
+        "Cover different angles; never repeat a question in other words."
     )
 
 
@@ -67,7 +69,8 @@ Rules:
 
 EXPLAIN_BATCH_SYSTEM = EXPLAIN_SYSTEM + """
 
-You are preparing these explanations before the talk, for several slides at once. Write one explanation per slide, in English. Reply with JSON only, in exactly this shape:
+You are preparing these explanations before the talk, for several slides at once. Write one explanation per slide, in English.
+Flick may also present the whole talk, speaking these explanations one after another. So let each one flow on from the slide before it (a short natural link such as "Now that we've seen how X works, let's look at Y"), greet the audience only on slide 1, and never say "this slide". Reply with JSON only, in exactly this shape:
 {"explanations":[{"slide":<slide number>,"text":"..."}]}"""
 
 
