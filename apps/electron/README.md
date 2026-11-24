@@ -55,3 +55,13 @@ If Python is not on the PATH, point to it: `$env:FLICK_PYTHON="C:\Path\To\python
 | `src/main/hotkeys.ts` | global hotkeys |
 | `src/main/backend-client.ts` | the few backend calls the shell needs |
 | `src/preload/preload.ts` | `window.flick` bridge used by the UI (`apps/ui/src/desktop.ts`) |
+
+## Windows installer
+
+GitHub builds it: **Actions → "Windows installer" → Run workflow**. When it finishes, download **Flick-Setup** from the run's *Artifacts*. Pushing a tag like `v1.0.0` also publishes it as a GitHub Release.
+
+What it contains:
+- the Python backend bundled with PyInstaller (`backend/flick.spec` → `resources/backend/flick-backend.exe`), so **no Python is needed** on the PC
+- the built screens (`apps/ui/dist` → `resources/ui`)
+
+The speech models download on first start (a few hundred MB, once). Uninstalling keeps your presentations and settings in `%APPDATA%\Flick`.
