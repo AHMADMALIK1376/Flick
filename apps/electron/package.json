@@ -10,7 +10,7 @@
     "dev": "tsc && electron build/main/main.js --dev-ui",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package": "tsc && electron-builder --win"
+    "package": "tsc && electron-builder --win --publish never"
   },
   "dependencies": {},
   "devDependencies": {
@@ -29,34 +29,22 @@
       "build/**/*",
       "assets/**/*",
       "!build/**/*.test.*",
-      "!build/**/*.map"
+      "!build/**/*.map",
+      "!build/**/*.d.ts"
     ],
     "asar": true,
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico",
-      "sign": null,
-      "verifyUpdateCodeSignature": false
+      "artifactName": "Flick-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "Flick",
       "include": "installer/uninstall-cleanup.nsh"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.utilities"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "icon": "assets/icon.png",
-      "category": "Utility"
     },
     "extraResources": [
       {
@@ -67,6 +55,12 @@
         "from": "../../backend/dist/flick-backend",
         "to": "backend"
       }
-    ]
+    ],
+    "executableName": "Flick"
+  },
+  "author": "Flick team (Ahmad Malik, Muhammad Mehdi Kazmi, Abdullah)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AHMADMALIK1376/Flick.git"
   }
 }
