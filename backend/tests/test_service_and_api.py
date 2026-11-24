@@ -205,3 +205,59 @@ def test_export_log_csv(db):
         assert c.get("/log/export", headers=H).status_code == 200
         assert c.get("/log/export?token=wrong").status_code == 401
         assert c.get("/log/export").status_code == 401
+# ── Prepared questions: add / edit / delete ─────────────────────────────────
+
+
+def _deck_id(client) -> str:
+    r = client.post("/decks/upload", headers=H, files={"file": ("Talk.pptx", make_pptx(["Intro", "Method"]))})
+    return r.json()["id"]
+
+
+def test_add_edit_delete_question(client, db):
+    deck_id = _deck_id(client)
+    r = client.post(f"/decks/{deck_id}/questions", headers=H, json={"slide": 1, "question": " What is X? ", "answer": "X is Y."})
+    assert r.status_code == 201
+    q = r.json()
+    assert q["question"] == "What is X?" and q["slide"] == 1
+    assert any(p["id"] == q["id"] for p in client.get(f"/decks/{deck_id}", headers=H).json()["predicted"])
+
+    # Changing the text drops the old meaning vector; changing only the answer keeps it.
+    db.save_embeddings("m", {q["id"]: b"vec"})
+    client.patch(f"/questions/{q['id']}", headers=H, json={"answer": "X is Z."})
+    assert q["id"] in db.get_embeddings(deck_id, "m")
+    r = client.patch(f"/questions/{q['id']}", headers=H, json={"question": "What is X really?"})
+    assert r.status_code == 200 and r.json()["question"] == "What is X really?" and r.json()["answer"] == "X is Z."
+    assert q["id"] not in db.get_embeddings(deck_id, "m")
+
+    assert client.delete(f"/questions/{q['id']}", headers=H).status_code == 204
+    assert client.delete(f"/questions/{q['id']}", headers=H).status_code == 404
+    assert all(p["id"] != q["id"] for p in client.get(f"/decks/{deck_id}", headers=H).json()["predicted"])
+
+
+def test_question_checks(client):
+    deck_id = _deck_id(client)
+    add = lambda body, d=deck_id: client.post(f"/decks/{d}/questions", headers=H, json=body)
+    assert add({"question": "  ", "answer": "a"}).status_code == 400
+    assert add({"slide": 9, "question": "q", "answer": "a"}).status_code == 400
+    assert add({"question": "q", "answer": "a"}, d="nope").status_code == 404
+    assert client.patch("/questions/nope", headers=H, json={"answer": "a"}).status_code == 404
+    assert client.post(f"/decks/{deck_id}/questions", json={"question": "q", "answer": "a"}).status_code == 401
+# ── POST /settings/test-key ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("fail, expected", [
+    (None, {"ok": True}),
+    ("invalid_key", {"ok": False, "reason": "invalid_key"}),
+    ("network", {"ok": False, "reason": "network"}),
+    ("missing_key", {"ok": False, "reason": "missing_key"}),
+])
+def test_test_key(db, fail, expected):
+    service = make_service(db, FakeLLM(fail=fail))
+    with TestClient(create_app(service, TOKEN)) as c:
+        r = c.post("/settings/test-key", headers=H)
+    assert r.status_code == 200
+    assert r.json() == expected
+
+
+def test_test_key_needs_token(client):
+    assert client.post("/settings/test-key").status_code == 401

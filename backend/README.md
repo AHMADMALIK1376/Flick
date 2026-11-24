@@ -41,12 +41,16 @@ All requests need the header `X-Flick-Token`.
 | GET | `/status` | Are the speech and meaning models ready; is PowerPoint available |
 | GET / PATCH | `/settings` | Read / change settings (API key comes back masked) |
 | GET | `/models` | Claude models to choose from |
+| POST | `/settings/test-key` | Does the saved Claude key work? `{ok: true}` or `{ok: false, reason}` (reason: `missing_key`, `invalid_key`, `network`, `timeout`, `rate_limit`, `api_error`) |
 | GET | `/decks`, `/decks/active`, `/decks/{id}` | Presentations |
 | POST | `/decks/from-path` `{path}` | Load a .pptx from disk |
 | POST | `/decks/upload` (multipart `file`) | Load an uploaded .pptx |
 | POST | `/decks/from-powerpoint` | Load the deck open in PowerPoint (Windows) |
 | POST | `/decks/{id}/activate`, `/decks/{id}/prepare` | Switch deck / prepare questions again |
 | DELETE | `/decks/{id}` | Remove a deck from Flick (the file is not touched) |
+| POST | `/decks/{id}/questions` `{slide, question, answer}` | Add a prepared question (201) |
+| PATCH | `/questions/{id}` `{slide?, question?, answer?}` | Edit a prepared question (a new question text is re-indexed for meaning matching) |
+| DELETE | `/questions/{id}` | Delete a prepared question (204) |
 | POST | `/question-starting` | The presenter started speaking: read the slide early |
 | POST | `/ask` `{text}` | Answer a question, or explain a slide if asked |
 | POST | `/ask-audio` (multipart `audio`) | Speech → text → answer in one request |
