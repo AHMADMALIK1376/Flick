@@ -7,6 +7,7 @@ import type {
   Deck,
   DeckSummary,
   ModelOption,
+  PredictedQuestion,
   Settings,
   SettingsUpdate,
   Status,
@@ -36,7 +37,12 @@ export const api = {
   prepareDeck: (id: string) => request<{ started: boolean }>('POST', `/decks/${id}/prepare`),
   deleteDeck: (id: string) => request<DeckSummary[]>('DELETE', `/decks/${id}`),
 
-  // TODO(#10): addQuestion / editQuestion / deleteQuestion once the backend has them.
+  // ── Prepared questions ──
+  addQuestion: (deckId: string, q: { slide: number; question: string; answer: string }) =>
+    request<PredictedQuestion>('POST', `/decks/${deckId}/questions`, q),
+  editQuestion: (id: string, changes: { slide?: number; question?: string; answer?: string }) =>
+    request<PredictedQuestion>('PATCH', `/questions/${id}`, changes),
+  deleteQuestion: (id: string) => request<void>('DELETE', `/questions/${id}`),
 
   // ── Live ──
   questionStarting: () => request<void>('POST', '/question-starting'),
