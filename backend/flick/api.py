@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import __version__
+from .llm import LLMError
 from .models import MODELS, Answer, Deck, DeckSummary, Settings, SettingsUpdate
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
@@ -121,6 +122,15 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     @app.get("/models", dependencies=auth)
     def models() -> list[dict]:
         return MODELS
+
+    @app.post("/settings/test-key", dependencies=auth)
+    async def test_key() -> dict:
+        """Does the saved Claude key work? Never returns or logs the key itself."""
+        try:
+            await service.llm.check_key()
+        except LLMError as err:
+            return {"ok": False, "reason": err.kind}
+        return {"ok": True}
 
     # ── Decks ───────────────────────────────────────────────────────────────
 
