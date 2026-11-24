@@ -1,6 +1,7 @@
 // Every backend endpoint as one typed function.
 // Full list with details: backend/README.md
 import { request } from './client';
+import { connection } from './connection';
 import type {
   Answer,
   AskAudioResult,
@@ -52,5 +53,6 @@ export const api = {
   // ── Q&A log ──
   getLog: (limit = 300) => request<Answer[]>('GET', `/log?limit=${limit}`),
   clearLog: () => request<void>('DELETE', '/log'),
-  // TODO(#11): exportLogUrl for GET /log/export
+  /** Download link for the log as CSV (a link can't send headers, so the token goes in the URL). */
+  exportLogUrl: () => `${connection.httpBase}/log/export?token=${encodeURIComponent(connection.token)}`,
 };
