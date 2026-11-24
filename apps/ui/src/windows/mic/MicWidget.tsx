@@ -4,6 +4,8 @@
 // States: idle, listening, answering, done.
 import { Box, Center, Loader, Text, UnstyledButton } from '@mantine/core';
 import { IconCheck, IconMicrophone } from '@tabler/icons-react';
+import { useEffect, useRef } from 'react';
+import { desktop } from '../../desktop';
 import { colors } from '../../theme';
 import { useTransparentWindow } from '../useTransparentWindow';
 import { useAskFlow } from './useAskFlow';
@@ -20,6 +22,11 @@ const circle = {
 export function MicWidget() {
   useTransparentWindow();
   const { phase, note, toggle } = useAskFlow();
+
+  // Desktop app: the Ask hotkey (Ctrl+Shift+Space) starts / stops recording here.
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+  useEffect(() => desktop?.onToggleAsk(() => toggleRef.current()), []);
 
   return (
     <Center h="100vh" style={{ flexDirection: 'column', gap: 4 }}>

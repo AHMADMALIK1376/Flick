@@ -14,6 +14,8 @@ import { colors } from '../../theme';
 import { formatDuration } from '../../utils/format';
 import { answerReducer, initialCardState, type CardState } from './answerState';
 import { useTransparentWindow } from '../useTransparentWindow';
+import { desktop } from '../../desktop';
+import { useAutoSpeak } from './useAutoSpeak';
 
 const AUTO_HIDE_MS = 20_000;
 
@@ -30,6 +32,15 @@ export function AnswerCard() {
       .then((s) => setHotkey(s.ask_hotkey))
       .catch(() => undefined);
   }, []);
+
+  useAutoSpeak();
+
+  // Desktop app: "Listening…" while the mic records; show the window when there is something to show.
+  useEffect(() => desktop?.onListening((on) => on && dispatch({ type: 'listening' })), []);
+  useEffect(() => {
+    if (state.phase === 'hidden') desktop?.hideCard();
+    else desktop?.showCard();
+  }, [state.phase]);
 
   useFlickEvent('thinking', (d) => dispatch({ type: 'thinking', id: d.id, question: d.question }));
   useFlickEvent('searching', (d) => dispatch({ type: 'searching', id: d.id }));

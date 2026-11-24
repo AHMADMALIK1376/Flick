@@ -6,6 +6,7 @@
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/flick';
+import { desktop } from '../../desktop';
 import { createRecorder } from './recorder';
 
 export type AskPhase = 'idle' | 'listening' | 'answering' | 'done';
@@ -32,6 +33,7 @@ export function useAskFlow() {
   const finish = useCallback(async () => {
     if (!recorder.current.recording) return;
     setPhase('answering');
+    desktop?.setListening(false);
     try {
       const audio = await recorder.current.stop();
       const result = await api.askAudio(audio);
@@ -55,6 +57,7 @@ export function useAskFlow() {
     try {
       await recorder.current.start();
       setPhase('listening');
+      desktop?.setListening(true);
       later(() => void finish(), MAX_RECORDING_MS);
     } catch (err) {
       notifications.show({ color: 'red', message: errorText(err) });
