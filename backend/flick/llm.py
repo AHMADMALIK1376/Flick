@@ -68,6 +68,8 @@ class SearchResult:
 
 
 class LLM(Protocol):
+    async def check_key(self) -> None: ...
+
     async def complete(self, system: str, message: Message, max_tokens: int = 700) -> str: ...
 
     async def search_complete(
@@ -108,6 +110,14 @@ class Claude:
             await self._client_for_key().models.list(limit=1)
         except Exception:
             pass  # no key yet, offline: the first real question will say so
+
+    async def check_key(self) -> None:
+        """Raises LLMError when the key is missing or does not work. A free call (lists models)."""
+        client = self._client_for_key()  # LLMError("missing_key") when no key is saved
+        try:
+            await client.models.list(limit=1)
+        except anthropic.APIError as err:
+            raise _map_error(err) from err
 
     async def complete(self, system: str, message: Message, max_tokens: int = 700) -> str:
         client = self._client_for_key()
