@@ -19,7 +19,7 @@ export const api = {
   updateSettings: (changes: SettingsUpdate) => request<Settings>('PATCH', '/settings', changes),
   status: () => request<Status>('GET', '/status'),
   models: () => request<ModelOption[]>('GET', '/models'),
-  // TODO(#12): testKey: () => request<{ ok: boolean; reason?: string }>('POST', '/settings/test-key'),
+  testKey: () => request<{ ok: boolean; reason?: string }>('POST', '/settings/test-key'),
 
   // ── Presentations (decks) ──
   listDecks: () => request<DeckSummary[]>('GET', '/decks'),
