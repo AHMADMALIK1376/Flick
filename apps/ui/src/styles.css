@@ -5,6 +5,20 @@ body {
 
 /* Windows without the sidebar (answer card, mic, presenter view) */
 .window-transparent body,
-body.window-transparent {
+body.window-transparent,
+body.window-transparent .mantine-AppShell-main {
   background: transparent;
+}
+
+/* Small pulsing aqua dot ("Listening…") */
+.flick-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6fcbc4;
+  animation: flick-pulse 1.2s ease-in-out infinite;
+}
+@keyframes flick-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.6; }
+  50% { transform: scale(1.2); opacity: 1; }
 }
