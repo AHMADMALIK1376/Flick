@@ -22,7 +22,7 @@ export function AppLayout() {
         <Stack justify="space-between" h="100%">
           <Box>
             <Group px="xs" py="md">
-              <Logo />
+              <Logo size={30} />
             </Group>
             <Stack gap={4} mt="md">
               {NAV.map(({ to, label, icon: Icon }) => (
