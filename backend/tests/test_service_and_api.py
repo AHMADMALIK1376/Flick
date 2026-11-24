@@ -174,3 +174,24 @@ def test_events_need_token(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/events?token=wrong") as ws:
             ws.receive_json()
+
+
+# ── POST /settings/test-key ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("fail, expected", [
+    (None, {"ok": True}),
+    ("invalid_key", {"ok": False, "reason": "invalid_key"}),
+    ("network", {"ok": False, "reason": "network"}),
+    ("missing_key", {"ok": False, "reason": "missing_key"}),
+])
+def test_test_key(db, fail, expected):
+    service = make_service(db, FakeLLM(fail=fail))
+    with TestClient(create_app(service, TOKEN)) as c:
+        r = c.post("/settings/test-key", headers=H)
+    assert r.status_code == 200
+    assert r.json() == expected
+
+
+def test_test_key_needs_token(client):
+    assert client.post("/settings/test-key").status_code == 401
