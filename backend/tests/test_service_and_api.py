@@ -174,3 +174,34 @@ def test_events_need_token(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/events?token=wrong") as ws:
             ws.receive_json()
+
+
+# ── GET /log/export ─────────────────────────────────────────────────────────
+
+
+def test_export_log_csv(db):
+    import csv as csvmod
+    import io as iomod
+
+    from flick.llm import SearchResult
+
+    service = make_service(db, FakeLLM(search=SearchResult("Answer, with a comma — اردو", [], False)))
+    with TestClient(create_app(service, TOKEN)) as c:
+        c.post("/ask", headers=H, json={"text": "First question?"})
+        c.post("/ask", headers=H, json={"text": "Second, question?"})
+        c.post("/ask", headers=H, json={"text": "Flick"})  # greeting: left out
+
+        r = c.get(f"/log/export?token={TOKEN}")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/csv")
+        assert "flick-qa-log.csv" in r.headers["content-disposition"]
+        text = r.content.decode("utf-8")
+        assert text.startswith("\ufeff")
+        rows = list(csvmod.reader(iomod.StringIO(text.lstrip("\ufeff"))))
+        assert rows[0][:4] == ["Time", "Question", "Answer", "Source"]
+        assert [row[1] for row in rows[1:]] == ["First question?", "Second, question?"]  # oldest first
+        assert rows[2][2] == "Answer, with a comma — اردو"
+
+        assert c.get("/log/export", headers=H).status_code == 200
+        assert c.get("/log/export?token=wrong").status_code == 401
+        assert c.get("/log/export").status_code == 401

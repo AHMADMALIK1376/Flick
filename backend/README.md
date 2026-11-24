@@ -53,6 +53,7 @@ All requests need the header `X-Flick-Token`.
 | POST | `/transcribe` (multipart `audio`) | Speech → text only |
 | POST | `/explain` `{slide?}` | Explain the slide on screen (or slide N), always spoken |
 | GET / DELETE | `/log` | Q&A log / clear it |
+| GET | `/log/export` | Q&A log as a CSV file (UTF-8 with BOM for Excel). Token in the header **or** `?token=` (for a download link) |
 | WS | `/events?token=…` | Live events (below) |
 
 ### Live events
