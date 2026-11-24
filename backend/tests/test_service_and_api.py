@@ -174,3 +174,42 @@ def test_events_need_token(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/events?token=wrong") as ws:
             ws.receive_json()
+
+
+# ── Prepared questions: add / edit / delete ─────────────────────────────────
+
+
+def _deck_id(client) -> str:
+    r = client.post("/decks/upload", headers=H, files={"file": ("Talk.pptx", make_pptx(["Intro", "Method"]))})
+    return r.json()["id"]
+
+
+def test_add_edit_delete_question(client, db):
+    deck_id = _deck_id(client)
+    r = client.post(f"/decks/{deck_id}/questions", headers=H, json={"slide": 1, "question": " What is X? ", "answer": "X is Y."})
+    assert r.status_code == 201
+    q = r.json()
+    assert q["question"] == "What is X?" and q["slide"] == 1
+    assert any(p["id"] == q["id"] for p in client.get(f"/decks/{deck_id}", headers=H).json()["predicted"])
+
+    # Changing the text drops the old meaning vector; changing only the answer keeps it.
+    db.save_embeddings("m", {q["id"]: b"vec"})
+    client.patch(f"/questions/{q['id']}", headers=H, json={"answer": "X is Z."})
+    assert q["id"] in db.get_embeddings(deck_id, "m")
+    r = client.patch(f"/questions/{q['id']}", headers=H, json={"question": "What is X really?"})
+    assert r.status_code == 200 and r.json()["question"] == "What is X really?" and r.json()["answer"] == "X is Z."
+    assert q["id"] not in db.get_embeddings(deck_id, "m")
+
+    assert client.delete(f"/questions/{q['id']}", headers=H).status_code == 204
+    assert client.delete(f"/questions/{q['id']}", headers=H).status_code == 404
+    assert all(p["id"] != q["id"] for p in client.get(f"/decks/{deck_id}", headers=H).json()["predicted"])
+
+
+def test_question_checks(client):
+    deck_id = _deck_id(client)
+    add = lambda body, d=deck_id: client.post(f"/decks/{d}/questions", headers=H, json=body)
+    assert add({"question": "  ", "answer": "a"}).status_code == 400
+    assert add({"slide": 9, "question": "q", "answer": "a"}).status_code == 400
+    assert add({"question": "q", "answer": "a"}, d="nope").status_code == 404
+    assert client.patch("/questions/nope", headers=H, json={"answer": "a"}).status_code == 404
+    assert client.post(f"/decks/{deck_id}/questions", json={"question": "q", "answer": "a"}).status_code == 401

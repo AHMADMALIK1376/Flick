@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 import threading
 from pathlib import Path
 from typing import Optional
@@ -250,6 +251,59 @@ class Database:
                 [(q.id, deck_id, q.slide, q.question, q.answer) for q in questions],
             )
             self._conn.commit()
+
+    def get_question(self, question_id: str) -> Optional[PredictedQuestion]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, slide, question, answer FROM predicted_questions WHERE id = ?", (question_id,)
+            ).fetchone()
+        return PredictedQuestion(**dict(row)) if row else None
+
+    def question_deck_id(self, question_id: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute("SELECT deck_id FROM predicted_questions WHERE id = ?", (question_id,)).fetchone()
+        return row["deck_id"] if row else None
+
+    def add_question(self, deck_id: str, slide: int, question: str, answer: str) -> PredictedQuestion:
+        q = PredictedQuestion(id=str(uuid.uuid4()), slide=slide, question=question, answer=answer)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO predicted_questions(id, deck_id, slide, question, answer) VALUES (?, ?, ?, ?, ?)",
+                (q.id, deck_id, q.slide, q.question, q.answer),
+            )
+            self._conn.commit()
+        return q
+
+    def update_question(
+        self,
+        question_id: str,
+        question: Optional[str] = None,
+        answer: Optional[str] = None,
+        slide: Optional[int] = None,
+    ) -> Optional[PredictedQuestion]:
+        """Changes only the given fields. A new question text drops its meaning vector (re-made on next use)."""
+        current = self.get_question(question_id)
+        if current is None:
+            return None
+        updated = current.model_copy(
+            update={k: v for k, v in {"question": question, "answer": answer, "slide": slide}.items() if v is not None}
+        )
+        with self._lock:
+            self._conn.execute(
+                "UPDATE predicted_questions SET slide = ?, question = ?, answer = ? WHERE id = ?",
+                (updated.slide, updated.question, updated.answer, question_id),
+            )
+            if updated.question != current.question:
+                self._conn.execute("DELETE FROM question_embeddings WHERE question_id = ?", (question_id,))
+            self._conn.commit()
+        return updated
+
+    def delete_question(self, question_id: str) -> bool:
+        """True if it existed. Its meaning vector goes with it (ON DELETE CASCADE)."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM predicted_questions WHERE id = ?", (question_id,))
+            self._conn.commit()
+        return cur.rowcount > 0
 
     # ── Slide explanations ──────────────────────────────────────────────────
 
