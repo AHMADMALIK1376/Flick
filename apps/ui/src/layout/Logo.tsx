@@ -1,30 +1,48 @@
-// Flick wordmark: the spotlight is the dot on the "i".
-// TODO(#2): replace this simple version with the final logo from the design canvas
-// (Spotlight mark #1 + wordmark #11), exported as SVG into src/assets/.
-import { Text } from '@mantine/core';
+// Flick logo.
+//   <Logo />      the wordmark: "Flick" with the aqua spotlight as the dot on the "i"
+//   <LogoMark />  the Spotlight mark on its own (answer card, mic, icons)
+import { Box } from '@mantine/core';
+import dotUrl from '../assets/flick-dot.svg';
+import markUrl from '../assets/flick-mark.svg';
 import { colors } from '../theme';
 
 export function Logo({ size = 26 }: { size?: number }) {
   return (
-    <Text fw={800} fz={size} c={colors.plum} style={{ letterSpacing: -0.5, lineHeight: 1 }}>
-      Fl
-      <span style={{ position: 'relative' }}>
+    <Box
+      component="span"
+      role="img"
+      aria-label="Flick"
+      style={{
+        display: 'inline-block',
+        fontSize: size,
+        fontWeight: 800,
+        color: colors.ink,
+        letterSpacing: -size / 38,
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span aria-hidden>Fl</span>
+      <span aria-hidden style={{ position: 'relative', display: 'inline-block' }}>
         ı
-        <span
+        <img
+          src={dotUrl}
+          alt=""
           style={{
             position: 'absolute',
             left: '50%',
-            top: '-0.12em',
-            width: '0.26em',
-            height: '0.26em',
+            top: '-0.06em',
+            width: '0.5em',
+            height: '0.5em',
             transform: 'translateX(-50%)',
-            borderRadius: '50%',
-            background: colors.aqua,
-            boxShadow: `0 0 0.3em ${colors.aqua}`,
           }}
         />
       </span>
-      ck
-    </Text>
+      <span aria-hidden>ck</span>
+    </Box>
   );
+}
+
+export function LogoMark({ size = 24 }: { size?: number }) {
+  return <img src={markUrl} alt="Flick" width={size} height={size} style={{ display: 'block' }} />;
 }
