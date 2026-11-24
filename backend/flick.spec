@@ -7,7 +7,11 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 datas, binaries, hiddenimports = [], [], []
 
 # Packages with data files or native libraries that PyInstaller can't find on its own.
-for package in ("faster_whisper", "ctranslate2", "fastembed", "onnxruntime", "tokenizers", "pptx", "av"):
+for package in (
+    "faster_whisper", "ctranslate2", "fastembed", "onnxruntime", "tokenizers", "pptx", "av",
+    # Flick's natural voice: Kokoro + the espeak-ng pronunciation data it needs
+    "kokoro_onnx", "espeakng_loader", "phonemizer",
+):
     d, b, h = collect_all(package)
     datas += d
     binaries += b
