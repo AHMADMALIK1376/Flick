@@ -48,6 +48,9 @@ All requests need the header `X-Flick-Token`.
 | POST | `/decks/from-powerpoint` | Load the deck open in PowerPoint (Windows) |
 | POST | `/decks/{id}/activate`, `/decks/{id}/prepare` | Switch deck / prepare questions again |
 | DELETE | `/decks/{id}` | Remove a deck from Flick (the file is not touched) |
+| POST | `/decks/{id}/questions` `{slide, question, answer}` | Add a prepared question (201) |
+| PATCH | `/questions/{id}` `{slide?, question?, answer?}` | Edit a prepared question (a new question text is re-indexed for meaning matching) |
+| DELETE | `/questions/{id}` | Delete a prepared question (204) |
 | POST | `/question-starting` | The presenter started speaking: read the slide early |
 | POST | `/ask` `{text}` | Answer a question, or explain a slide if asked |
 | POST | `/ask-audio` (multipart `audio`) | Speech → text → answer in one request |

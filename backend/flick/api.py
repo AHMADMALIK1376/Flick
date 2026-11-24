@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from . import __version__
 from .llm import LLMError
-from .models import MODELS, Answer, Deck, DeckSummary, Settings, SettingsUpdate
+from .models import MODELS, Answer, Deck, DeckSummary, PredictedQuestion, Settings, SettingsUpdate
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
 from .transcribe import TranscriberUnavailable
@@ -49,6 +49,18 @@ class ExplainRequest(BaseModel):
 
 class PathRequest(BaseModel):
     path: str
+
+
+class QuestionCreate(BaseModel):
+    slide: int = 0  # 0 = about the whole talk
+    question: str
+    answer: str
+
+
+class QuestionUpdate(BaseModel):
+    slide: Optional[int] = None
+    question: Optional[str] = None
+    answer: Optional[str] = None
 
 
 class PublicSettings(Settings):
@@ -193,6 +205,44 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     def delete(deck_id: str):
         service.db.delete_deck(deck_id)
         return service.db.list_decks()
+
+    # ── Prepared questions (users can fix what Flick predicted) ─────────────
+
+    def check_question(deck: Deck, slide: Optional[int], question: Optional[str], answer: Optional[str]) -> None:
+        if question is not None and not question.strip() or answer is not None and not answer.strip():
+            raise HTTPException(status_code=400, detail="Write a question and an answer.")
+        if slide is not None and not 0 <= slide <= len(deck.slides):
+            raise HTTPException(status_code=400, detail="That slide is not in this presentation.")
+
+    @app.post("/decks/{deck_id}/questions", dependencies=auth, status_code=201, response_model=PredictedQuestion)
+    def add_question(deck_id: str, req: QuestionCreate):
+        deck = service.db.get_deck(deck_id)
+        if deck is None:
+            raise HTTPException(status_code=404, detail="No such presentation.")
+        check_question(deck, req.slide, req.question, req.answer)
+        return service.db.add_question(deck_id, req.slide, req.question.strip(), req.answer.strip())
+
+    @app.patch("/questions/{question_id}", dependencies=auth, response_model=PredictedQuestion)
+    def edit_question(question_id: str, req: QuestionUpdate):
+        deck_id = service.db.question_deck_id(question_id)
+        deck = service.db.get_deck(deck_id) if deck_id else None
+        if deck is None:
+            raise HTTPException(status_code=404, detail="No such question.")
+        check_question(deck, req.slide, req.question, req.answer)
+        updated = service.db.update_question(
+            question_id,
+            question=req.question.strip() if req.question is not None else None,
+            answer=req.answer.strip() if req.answer is not None else None,
+            slide=req.slide,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="No such question.")
+        return updated
+
+    @app.delete("/questions/{question_id}", dependencies=auth, status_code=204)
+    def delete_question(question_id: str):
+        if not service.db.delete_question(question_id):
+            raise HTTPException(status_code=404, detail="No such question.")
 
     # ── Live ────────────────────────────────────────────────────────────────
 
