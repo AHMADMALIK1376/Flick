@@ -41,6 +41,7 @@ All requests need the header `X-Flick-Token`.
 | GET | `/status` | Are the speech and meaning models ready; is PowerPoint available |
 | GET / PATCH | `/settings` | Read / change settings (API key comes back masked) |
 | GET | `/models` | Claude models to choose from |
+| POST | `/settings/test-key` | Does the saved Claude key work? `{ok: true}` or `{ok: false, reason}` (reason: `missing_key`, `invalid_key`, `network`, `timeout`, `rate_limit`, `api_error`) |
 | GET | `/decks`, `/decks/active`, `/decks/{id}` | Presentations |
 | POST | `/decks/from-path` `{path}` | Load a .pptx from disk |
 | POST | `/decks/upload` (multipart `file`) | Load an uploaded .pptx |

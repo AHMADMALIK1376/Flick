@@ -37,6 +37,10 @@ class FakeLLM:
             raise LLMError(self.fail, "boom")
         return self._text(system, message)
 
+    async def check_key(self):
+        if self.fail:
+            raise LLMError(self.fail, "boom")
+
     async def search_complete(self, system, message, max_tokens=700, max_searches=3):
         self.search_calls.append((system, message_text(message)))
         self.raw_search_messages.append(message)
