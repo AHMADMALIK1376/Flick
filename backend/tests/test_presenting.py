@@ -232,3 +232,23 @@ def test_present_api(db, tmp_path):
         assert {v["id"] for v in c.get("/voices", headers=token).json()} >= {"af_heart", "bm_george"}
         assert c.get("/status", headers=token).json()["voice"]["ready"] is True
         assert c.post("/present/start").status_code == 401
+
+
+def test_raise_hand_through_the_api(db, tmp_path):
+    """The mic/hotkey calls /question-starting: it must pause the talk (not error)."""
+    import time
+
+    speaker = make_speaker(tmp_path)
+    service = make_service(db, speaker=speaker)
+    token = {"X-Flick-Token": "t"}
+    with TestClient(create_app(service, "t")) as c:
+        c.post("/decks/upload", headers=token, files={"file": ("Talk.pptx", make_pptx(["A", "B", "C"]))})
+        c.post("/present/start", headers=token, json={})
+        for _ in range(100):
+            if c.get("/present", headers=token).json()["state"] == "presenting":
+                break
+            time.sleep(0.02)
+        assert c.post("/question-starting", headers=token).status_code == 204
+        status = c.get("/present", headers=token).json()
+        assert status["state"] == "paused" and status["paused_for"] == "question"
+        c.post("/present/stop", headers=token)

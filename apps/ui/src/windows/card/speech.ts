@@ -5,6 +5,7 @@
 // - Streamed sentences are said as they arrive.
 // - A whole answer that was NOT streamed (prepared answers, ready slide explanations) is said at the end.
 // - Errors and greetings are never spoken.
+// - Anything Flick's natural voice already says in the backend ("voiced") is never repeated here.
 import type { Answer, FlickEventMap } from '../../api/types';
 
 export type SpeechStep = { cancel: true } | { say: string } | null;
@@ -26,12 +27,12 @@ export function speechFor(
     case 'thinking':
       return { cancel: true };
     case 'searching':
-      return event.data.speak ? { say: ONE_MOMENT } : null;
+      return event.data.speak && !event.data.voiced ? { say: ONE_MOMENT } : null;
     case 'answer_delta':
-      return event.data.speak && event.data.text.trim() ? { say: event.data.text } : null;
+      return event.data.speak && !event.data.voiced && event.data.text.trim() ? { say: event.data.text } : null;
     case 'answer': {
       const a = event.data;
-      if (!a.speak || a.streamed || a.origin === 'error' || a.origin === 'greeting') return null;
+      if (!a.speak || a.voiced || a.streamed || a.origin === 'error' || a.origin === 'greeting') return null;
       return a.answer.trim() ? { say: a.answer } : null;
     }
   }

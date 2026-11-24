@@ -13,6 +13,7 @@ const answer = (over: Partial<Answer> = {}): Answer => ({
   timestamp: 0,
   speak: true,
   streamed: false,
+  voiced: false,
   ...over,
 });
 
@@ -32,6 +33,11 @@ describe('speechFor', () => {
   });
   it('does not repeat a streamed answer', () => {
     expect(speechFor({ type: 'answer', data: answer({ streamed: true }) })).toBeNull();
+  });
+  it('stays quiet when Flick already said it', () => {
+    expect(speechFor({ type: 'answer', data: answer({ voiced: true }) })).toBeNull();
+    expect(speechFor({ type: 'answer_delta', data: { id: 'a', text: 'Hi.', speak: true, voiced: true } })).toBeNull();
+    expect(speechFor({ type: 'searching', data: { id: 'a', speak: true, voiced: true } })).toBeNull();
   });
   it('never speaks errors or private answers', () => {
     expect(speechFor({ type: 'answer', data: answer({ origin: 'error' }) })).toBeNull();

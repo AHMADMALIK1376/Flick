@@ -28,10 +28,15 @@ The floating answer card shows **where the answer came from** (*Prepared answer*
 
 **"Flick, explain this slide"** (or **Ctrl+Shift+E**): Flick knows which slide is on screen (it connects to Microsoft PowerPoint) and explains it to the audience out loud, with examples.
 
+**"Present for me."** Tired, or need a hand? Press **Present for me** (or say *"Flick, present this for me"*). Flick runs the PowerPoint slide show and **gives the whole talk itself**: it explains every slide to the class in a **natural human voice**, with examples, and moves to the next slide on its own. When a student has a question, press the Ask hotkey: Flick **stops mid-sentence, listens, answers, says "Now, let's continue"** and carries on. Pause, next, previous and stop work any time, from the app, the floating card or by voice.
+
 **After the talk.** The **Q&A Log** keeps every question, answer and web source. Export it as CSV.
 
 ### Highlights
 
+- **Gives the whole talk for you**, slide by slide, pausing for questions
+- **A natural, human-sounding voice that runs offline** (no extra API key), with 4 voices and adjustable speed
+- **More prepared questions for harder decks**: 2 to 8 per slide depending on how dense it is (100–200 for a complex deck)
 - **Speaks English, Urdu and Roman Urdu**, and answers in the language of the question
 - **Private speech**: speech recognition runs on your computer; only the question text goes to the AI
 - **Stays on top of the slide show** and never steals focus from PowerPoint, so your clicker keeps working
@@ -51,13 +56,14 @@ flowchart LR
     subgraph Backend["Python backend (FastAPI)"]
       Match["Prepared-answer matching<br/>words + meaning"]
       STT["Speech to text<br/>faster-whisper"]
+      TTS["Natural voice<br/>Kokoro"]
       DB[("SQLite")]
     end
   end
   Claude["Claude API<br/>+ web search"]
 
   UI -- "HTTP + live events (local, token)" --> Backend
-  Backend -- "current slide (COM)" --> PPT
+  Backend -- "current slide · next slide (COM)" --> PPT
   Backend -- "slides / web answers" --> Claude
 ```
 
@@ -102,13 +108,14 @@ Disclosed as required by the competition rules.
 **APIs and services**
 - **Anthropic Claude API** (Messages API, with the server-side **web search** tool): predicts questions, answers from slides and the web, writes slide explanations. Default model Claude Haiku 5.5; Sonnet / Opus selectable. Each user provides their own API key.
 - **Microsoft PowerPoint** (COM automation via pywin32, read-only): which slide is on screen, and the open presentation.
-- **Windows speech voices** (through the browser Speech Synthesis API in Electron): reading answers aloud.
+- **Windows speech voices** (through the browser Speech Synthesis API in Electron): fallback voice, e.g. for Urdu.
 
 **On-device AI models** (downloaded on first run)
 - **OpenAI Whisper** speech-to-text, run with **faster-whisper** (CTranslate2), size `small` by default
 - **paraphrase-multilingual-MiniLM-L12-v2** sentence embeddings (via **fastembed**) for matching questions by meaning
+- **Kokoro-82M** text-to-speech (Apache-2.0), run with **kokoro-onnx** and **espeak-ng** (via espeakng-loader, GPL-3.0) for pronunciation: Flick's natural voice
 
-**Backend libraries (Python)**: FastAPI, Uvicorn, Pydantic, anthropic (SDK), python-pptx, python-multipart, NumPy, fastembed, faster-whisper, pywin32; tests: pytest, pytest-asyncio, httpx.
+**Backend libraries (Python)**: FastAPI, Uvicorn, Pydantic, anthropic (SDK), python-pptx, python-multipart, NumPy, fastembed, faster-whisper, kokoro-onnx, phonemizer, espeakng-loader, pywin32; tests: pytest, pytest-asyncio, httpx.
 
 **Frontend libraries**: React, React Router, Mantine (core, hooks, notifications, dropzone), Tabler Icons, Plus Jakarta Sans font (Fontsource); build and tests: Vite, TypeScript, Vitest, Testing Library, PostCSS.
 

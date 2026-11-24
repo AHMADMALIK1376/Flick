@@ -30,6 +30,15 @@ export class BackendClient {
     return this.request('POST', '/explain', { slide: null });
   }
 
+  /** "Present for me" from the tray. */
+  presentStart(): Promise<unknown> {
+    return this.request('POST', '/present/start', { from_slide: null });
+  }
+
+  presentStop(): Promise<unknown> {
+    return this.request('POST', '/present/stop');
+  }
+
   questionStarting(): Promise<unknown> {
     return fetch(`http://127.0.0.1:${this.info.port}/question-starting`, {
       method: 'POST',

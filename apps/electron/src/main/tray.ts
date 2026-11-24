@@ -5,6 +5,8 @@ export interface TrayActions {
   openPresenter: () => void;
   ask: () => void;
   explain: () => void;
+  present: () => void;
+  stopPresenting: () => void;
   quit: () => void;
 }
 
@@ -20,6 +22,9 @@ export function createTray(iconPath: string, actions: TrayActions): Tray {
       { type: 'separator' },
       { label: 'Ask a question', click: actions.ask },
       { label: 'Explain this slide', click: actions.explain },
+      { type: 'separator' },
+      { label: 'Present for me', click: actions.present },
+      { label: 'Stop presenting', click: actions.stopPresenting },
       { type: 'separator' },
       { label: 'Quit Flick', click: actions.quit },
     ]),

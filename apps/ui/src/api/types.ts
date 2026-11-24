@@ -66,6 +66,8 @@ export interface Answer {
   timestamp: number; // seconds since 1970
   speak: boolean;
   streamed: boolean;
+  /** Said by Flick's natural voice in the backend: the screens must not speak it again. */
+  voiced: boolean;
 }
 
 export interface PrepProgress {
@@ -88,6 +90,10 @@ export interface Settings {
   speech_model: string;
   language: string;
   show_mic: boolean;
+  /** 'natural' = Flick's own offline voice (needed to present); 'windows' = the Windows voice. */
+  voice: 'natural' | 'windows';
+  voice_name: string;
+  voice_speed: number;
 }
 
 /** Send only the fields you change. */
@@ -103,6 +109,21 @@ export interface Status {
   meaning_model: { ready: boolean; error: string | null };
   powerpoint: boolean;
   has_api_key: boolean;
+  voice: { ready: boolean; error: string | null; downloading: boolean };
+}
+
+export type PresentState = 'idle' | 'starting' | 'presenting' | 'paused' | 'finished' | 'error';
+
+/** "Present for me": Flick gives the whole talk. */
+export interface PresentStatus {
+  state: PresentState;
+  slide: number | null;
+  total: number;
+  /** The sentence being said now (shown as a caption). */
+  line: string | null;
+  paused_for: 'question' | 'manual' | null;
+  message: string | null;
+  deck: string | null;
 }
 
 export interface AskAudioResult {
@@ -116,10 +137,11 @@ export interface AskAudioResult {
 /** Event name → the data it carries. */
 export interface FlickEventMap {
   thinking: { id: string; question: string }; // a question arrived, Flick is working
-  searching: { id: string; speak: boolean }; // Flick is searching the web
-  answer_delta: { id: string; text: string; speak: boolean }; // one more sentence of the answer
+  searching: { id: string; speak: boolean; voiced?: boolean }; // Flick is searching the web
+  answer_delta: { id: string; text: string; speak: boolean; voiced?: boolean }; // one more sentence of the answer
   answer: Answer; // the final answer
   prep_progress: PrepProgress; // preparing a deck
+  present: PresentStatus; // presenting: slide, state, caption
 }
 
 export type FlickEventType = keyof FlickEventMap;

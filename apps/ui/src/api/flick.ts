@@ -9,6 +9,7 @@ import type {
   DeckSummary,
   ModelOption,
   PredictedQuestion,
+  PresentStatus,
   Settings,
   SettingsUpdate,
   Status,
@@ -55,6 +56,19 @@ export const api = {
     form.append('audio', audio, 'question.webm');
     return request<AskAudioResult>('POST', '/ask-audio', form);
   },
+
+  // ── Present for me ──
+  presentStatus: () => request<PresentStatus>('GET', '/present'),
+  presentStart: (fromSlide?: number) => request<PresentStatus>('POST', '/present/start', { from_slide: fromSlide ?? null }),
+  presentPause: () => request<PresentStatus>('POST', '/present/pause'),
+  presentResume: () => request<PresentStatus>('POST', '/present/resume'),
+  presentNext: () => request<PresentStatus>('POST', '/present/next'),
+  presentPrevious: () => request<PresentStatus>('POST', '/present/previous'),
+  presentStop: () => request<PresentStatus>('POST', '/present/stop'),
+
+  // ── Voice ──
+  voices: () => request<ModelOption[]>('GET', '/voices'),
+  voiceTest: () => request<void>('POST', '/voice/test'),
 
   // ── Q&A log ──
   getLog: (limit = 300) => request<Answer[]>('GET', `/log?limit=${limit}`),

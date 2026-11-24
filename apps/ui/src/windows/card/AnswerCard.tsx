@@ -3,7 +3,7 @@
 // Small always-on-top window (Electron opens #/card). Shows live answers.
 // States: waiting → thinking → (searching) → streaming → answer, or error.
 // Speaking aloud automatically is done by Electron; the Speak button here is a manual replay.
-import { ActionIcon, Anchor, Box, Button, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Box, Button, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconExternalLink, IconPlayerStop, IconVolume, IconX } from '@tabler/icons-react';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { api } from '../../api/flick';
@@ -16,6 +16,8 @@ import { answerReducer, initialCardState, type CardState } from './answerState';
 import { useTransparentWindow } from '../useTransparentWindow';
 import { desktop } from '../../desktop';
 import { useAutoSpeak } from './useAutoSpeak';
+import { usePresenter, type Presenter } from '../../hooks/usePresenter';
+import { PresentControls, presentLabel } from '../../components/PresentControls';
 
 const AUTO_HIDE_MS = 20_000;
 
@@ -34,13 +36,22 @@ export function AnswerCard() {
   }, []);
 
   useAutoSpeak();
+  const presenter = usePresenter();
+  const presenting = presenter.active;
+
+  // Back to the talk after a question: show the presenting view again.
+  const lastPresentState = useRef(presenter.status.state);
+  useEffect(() => {
+    if (lastPresentState.current === 'paused' && presenter.status.state === 'presenting') dispatch({ type: 'hide' });
+    lastPresentState.current = presenter.status.state;
+  }, [presenter.status.state]);
 
   // Desktop app: "Listening…" while the mic records; show the window when there is something to show.
   useEffect(() => desktop?.onListening((on) => on && dispatch({ type: 'listening' })), []);
   useEffect(() => {
-    if (state.phase === 'hidden') desktop?.hideCard();
+    if (state.phase === 'hidden' && !presenting) desktop?.hideCard();
     else desktop?.showCard();
-  }, [state.phase]);
+  }, [state.phase, presenting]);
 
   useFlickEvent('thinking', (d) => dispatch({ type: 'thinking', id: d.id, question: d.question }));
   useFlickEvent('searching', (d) => dispatch({ type: 'searching', id: d.id }));
@@ -75,18 +86,55 @@ export function AnswerCard() {
           overflow: 'hidden',
         }}
       >
-        <Header state={state} onClose={() => dispatch({ type: 'hide' })} />
+        <Header state={state} presenting={presenting && state.phase === 'hidden'} onClose={() => dispatch({ type: 'hide' })} />
         <ScrollArea style={{ flex: 1 }} px={16} pt={14} pb={6}>
-          <Body state={state} hotkey={hotkey} />
+          {presenting && state.phase === 'hidden' ? <PresentBody presenter={presenter} /> : <Body state={state} hotkey={hotkey} />}
         </ScrollArea>
-        <Footer state={state} />
+        {presenting && state.phase === 'hidden' ? (
+          <Group px={16} pt={8} pb={14} justify="center">
+            <PresentControls presenter={presenter} size="md" />
+          </Group>
+        ) : (
+          <Footer state={state} />
+        )}
       </Stack>
     </Box>
   );
 }
 
-function Header({ state, onClose }: { state: CardState; onClose: () => void }) {
+function PresentBody({ presenter }: { presenter: Presenter }) {
+  const { status } = presenter;
+  const listening = status.state === 'paused' && status.paused_for === 'question';
+  return (
+    <>
+      <Text fz={12.5} fw={700} c={colors.muted} mb={8}>
+        {presentLabel(status)}
+      </Text>
+      {listening ? (
+        <Group gap={10}>
+          <span className="flick-pulse" />
+          <Text fz={15} c={colors.ink}>
+            Listening to the question…
+          </Text>
+        </Group>
+      ) : (
+        <Text fz={16} lh={1.55} c={colors.ink}>
+          {status.line ?? '…'}
+        </Text>
+      )}
+    </>
+  );
+}
+
+function Header({ state, presenting, onClose }: { state: CardState; presenting: boolean; onClose: () => void }) {
   let badge = null;
+  if (presenting) {
+    badge = (
+      <Badge radius="xl" tt="none" fw={600} styles={{ root: { background: colors.explainBg, color: colors.explainText } }}>
+        Presenting
+      </Badge>
+    );
+  }
   if (state.phase === 'answer') badge = <OriginBadge origin={state.answer.origin} />;
   if (state.phase === 'error') badge = <OriginBadge origin="error" />;
 

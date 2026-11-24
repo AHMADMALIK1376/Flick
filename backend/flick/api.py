@@ -312,7 +312,8 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     # ── Live ────────────────────────────────────────────────────────────────
 
     @app.post("/question-starting", dependencies=auth, status_code=204)
-    def question_starting():
+    async def question_starting():
+        # async: while presenting this pauses the talk, which needs the event loop.
         service.question_starting()
 
     @app.post("/ask", dependencies=auth, response_model=Optional[Answer])
