@@ -9,14 +9,17 @@ Flick or read its settings.
 from __future__ import annotations
 
 import asyncio
+import csv
 import hmac
+import io
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from . import __version__
@@ -285,6 +288,36 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     def log(limit: int = Query(default=300, ge=1, le=1000)):
         return service.db.get_log(limit=limit)
 
+    @app.get("/log/export")
+    def export_log(
+        token_param: str = Query(default="", alias="token"),
+        x_flick_token: str = Header(default=""),
+    ):
+        """The Q&A log as a CSV file. A download link can't send headers, so ?token= also works."""
+        if not (hmac.compare_digest(token_param, token) or hmac.compare_digest(x_flick_token, token)):
+            raise HTTPException(status_code=401, detail="Wrong or missing token.")
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(["Time", "Question", "Answer", "Source", "Slide", "Duration (ms)", "Web sources"])
+        for a in reversed(service.db.get_log(limit=1000)):  # oldest first
+            if a.origin == "greeting":
+                continue
+            writer.writerow([
+                datetime.fromtimestamp(a.timestamp).strftime("%Y-%m-%d %H:%M"),
+                a.question,
+                a.answer,
+                ORIGIN_NAMES.get(a.origin, a.origin),
+                a.current_slide if a.current_slide is not None else "",
+                a.duration_ms,
+                " | ".join(f"{s.title} ({s.url})" for s in a.sources),
+            ])
+        # The BOM makes Excel read the file as UTF-8, so Urdu shows correctly.
+        return Response(
+            content="\ufeff" + out.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="flick-qa-log.csv"'},
+        )
+
     @app.delete("/log", dependencies=auth, status_code=204)
     def clear_log():
         service.db.clear_log()
@@ -314,6 +347,16 @@ async def _read_audio(audio: UploadFile) -> bytes:
     if not data:
         raise HTTPException(status_code=400, detail="The recording is empty.")
     return data
+
+
+ORIGIN_NAMES = {
+    "prepared": "Prepared answer",
+    "slides": "From your slides",
+    "web": "From the web",
+    "general": "General knowledge",
+    "explain": "Slide explanation",
+    "error": "Problem",
+}
 
 
 def _summary(service: FlickService, deck_id: str) -> DeckSummary:
