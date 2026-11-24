@@ -187,6 +187,12 @@ async function start(): Promise<void> {
     openPresenter,
     ask: toggleAsk,
     explain: explainSlide,
+    present: () => {
+      client?.presentStart().catch(() => openDashboard()); // e.g. no deck yet: show why
+    },
+    stopPresenting: () => {
+      client?.presentStop().catch(() => undefined);
+    },
     quit: () => app.quit(),
   });
 

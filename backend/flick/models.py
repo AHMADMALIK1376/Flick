@@ -78,6 +78,8 @@ class Answer(BaseModel):
     # True when the text was already sent sentence by sentence ("answer_delta"
     # events) and spoken as it arrived: don't speak the final text again.
     streamed: bool = False
+    # True when Flick's natural voice (played by the backend) says it: the screens stay quiet.
+    voiced: bool = False
 
 
 class PrepProgress(BaseModel):
@@ -102,6 +104,10 @@ class Settings(BaseModel):
     speech_model: str = "small"
     language: str = "en"
     show_mic: bool = True
+    # 'natural': Flick's offline neural voice (needed for "present for me"). 'windows': the Windows voice.
+    voice: Literal["natural", "windows"] = "natural"
+    voice_name: str = "af_heart"
+    voice_speed: float = Field(default=1.0, ge=0.7, le=1.4)
 
 
 class SettingsUpdate(BaseModel):
@@ -116,6 +122,9 @@ class SettingsUpdate(BaseModel):
     speech_model: Optional[str] = None
     language: Optional[str] = None
     show_mic: Optional[bool] = None
+    voice: Optional[Literal["natural", "windows"]] = None
+    voice_name: Optional[str] = None
+    voice_speed: Optional[float] = Field(default=None, ge=0.7, le=1.4)
 
 
 # Models offered in Settings. Haiku first: live answers are latency-bound.

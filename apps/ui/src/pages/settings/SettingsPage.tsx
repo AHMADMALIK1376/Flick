@@ -14,12 +14,13 @@ import {
   Radio,
   Select,
   SimpleGrid,
+  Slider,
   Stack,
   Text,
   TextInput,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconPlugConnected } from '@tabler/icons-react';
+import { IconCheck, IconPlugConnected, IconVolume } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../../api/flick';
 import type { ModelOption, Settings, SettingsUpdate } from '../../api/types';
@@ -50,12 +51,18 @@ function errorText(err: unknown): string {
 export function SettingsPage() {
   const [saved, setSaved] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [voices, setVoices] = useState<ModelOption[]>([]);
+  const [testingVoice, setTestingVoice] = useState(false);
   const [form, setForm] = useState<Form | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null); // null = keep the saved key
   const [saving, setSaving] = useState(false);
   const [keyCheck, setKeyCheck] = useState<{ busy: boolean; ok?: boolean; text?: string }>({ busy: false });
 
   useEffect(() => {
+    api
+      .voices()
+      .then(setVoices)
+      .catch(() => undefined);
     Promise.all([api.getSettings(), api.models()])
       .then(([s, m]) => {
         setSaved(s);
@@ -103,6 +110,19 @@ export function SettingsPage() {
       notifications.show({ color: 'red', message: errorText(err) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  const voiceChanged = !!saved && !!form && (form.voice_name !== saved.voice_name || form.voice_speed !== saved.voice_speed);
+
+  async function hearVoice() {
+    setTestingVoice(true);
+    try {
+      await api.voiceTest();
+    } catch (err) {
+      notifications.show({ color: 'red', message: errorText(err) });
+    } finally {
+      window.setTimeout(() => setTestingVoice(false), 2500);
     }
   }
 
@@ -195,7 +215,74 @@ export function SettingsPage() {
         </SimpleGrid>
       </Section>
 
-      <Section label="Voice">
+      <Section label="Flick's voice">
+        <Radio.Group value={form.voice} onChange={(v) => set('voice', v as Form['voice'])}>
+          <Group gap={14} align="stretch">
+            <ChoiceCard
+              value="natural"
+              checked={form.voice === 'natural'}
+              title="Natural voice (recommended)"
+              text="A human-sounding voice that runs on this computer, no internet needed. Needed for “Present for me”."
+            />
+            <ChoiceCard
+              value="windows"
+              checked={form.voice === 'windows'}
+              title="Windows voice"
+              text="The built-in Windows voice. Use it for Urdu, or on a slow computer."
+            />
+          </Group>
+        </Radio.Group>
+        {form.voice === 'natural' && (
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing={18} mt={18}>
+            <Select
+              size="md"
+              label="Voice"
+              data={voices.map((v) => ({ value: v.id, label: v.name }))}
+              value={form.voice_name}
+              onChange={(v) => v && set('voice_name', v)}
+              allowDeselect={false}
+            />
+            <Stack gap={6}>
+              <Text fz={14} fw={500} c={colors.ink}>
+                Speed
+              </Text>
+              <Slider
+                min={0.8}
+                max={1.2}
+                step={0.05}
+                value={form.voice_speed}
+                onChange={(v) => set('voice_speed', v)}
+                label={(v) => `${v.toFixed(2)}×`}
+                marks={[
+                  { value: 0.8, label: 'Slower' },
+                  { value: 1, label: 'Normal' },
+                  { value: 1.2, label: 'Faster' },
+                ]}
+                color="aqua.6"
+                mb={18}
+              />
+            </Stack>
+            <Group gap={10}>
+              <Button
+                variant="default"
+                leftSection={<IconVolume size={16} />}
+                loading={testingVoice}
+                disabled={voiceChanged}
+                onClick={hearVoice}
+              >
+                Hear it
+              </Button>
+              {voiceChanged && (
+                <Text fz={12.5} c={colors.muted}>
+                  Save first to hear the new voice.
+                </Text>
+              )}
+            </Group>
+          </SimpleGrid>
+        )}
+      </Section>
+
+      <Section label="Asking by voice">
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing={18}>
           <HotkeyInput
             label="Ask hotkey"

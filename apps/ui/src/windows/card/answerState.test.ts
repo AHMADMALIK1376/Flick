@@ -14,6 +14,7 @@ function answer(over: Partial<Answer> = {}): Answer {
     timestamp: Date.now() / 1000,
     speak: true,
     streamed: true,
+    voiced: false,
     ...over,
   };
 }

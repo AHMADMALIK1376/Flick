@@ -142,14 +142,76 @@ def db():
     d.close()
 
 
-def make_service(db, llm=None, slide_answer: Optional[str] = "", platform="win32", embedder=None, transcriber=None):
+def make_service(
+    db, llm=None, slide_answer: Optional[str] = "", platform="win32", embedder=None, transcriber=None, speaker=None
+):
     calls = []
+    shown = []
 
     def query(kind):
         calls.append(kind)
         return slide_answer if kind == "slide" else None
 
-    bridge = PowerPointBridge(query=query, platform=platform)
-    service = FlickService(db, llm or FakeLLM(), bridge, EventBus(), embedder=embedder, transcriber=transcriber)
+    def show(number):
+        shown.append(number)
+        return True
+
+    bridge = PowerPointBridge(query=query, platform=platform, show=show)
+    service = FlickService(
+        db, llm or FakeLLM(), bridge, EventBus(), embedder=embedder, transcriber=transcriber, speaker=speaker
+    )
     service.query_calls = calls
+    service.shown_slides = shown
     return service
+
+
+class FakeVoice:
+    """Makes 'audio' instantly: 20 ms of silence per word, so tests run fast but timing is real."""
+
+    def __init__(self, ready=True, error=None):
+        self._ready = ready
+        self.error = error
+        self.downloading = False
+        self.spoken: list[str] = []  # every text synthesized
+
+    def ready(self):
+        return self._ready
+
+    def load(self):
+        self._ready = True
+
+    def synthesize(self, text, voice, speed):
+        import numpy as np
+
+        self.spoken.append(text)
+        return np.zeros(int(24000 * 0.02 * max(1, len(text.split()))), dtype=np.float32), 24000
+
+
+class RecordingPlayer:
+    """Remembers what was played (by file), instead of making sound."""
+
+    def __init__(self):
+        self.played = []
+
+    def start(self, wav):
+        self.played.append(wav)
+
+    def stop(self):
+        pass
+
+
+def make_speaker(tmp_path, voice=None):
+    from flick.voice import Speaker
+
+    player = RecordingPlayer()
+    speaker = Speaker(voice or FakeVoice(), cache_dir=tmp_path / "voice", settings=lambda: ("af_heart", 1.0), player=player)
+    speaker.played_texts = []  # filled by the wrapper below
+
+    original_say = speaker.say
+
+    def say(text):
+        speaker.played_texts.append(text)
+        return original_say(text)
+
+    speaker.say = say
+    return speaker

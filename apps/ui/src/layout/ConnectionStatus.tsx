@@ -62,19 +62,23 @@ function StatusNotes({ status }: { status: Status }) {
   if (!status.meaning_model.ready && status.meaning_model.error) {
     notes.push(<Warning key="meaning">Smart matching is not available.</Warning>);
   }
+  if (!status.voice.ready && status.voice.error) {
+    notes.push(<Warning key="voice">Flick's voice is not available.</Warning>);
+  }
   if (!status.powerpoint) {
     notes.push(<Warning key="ppt">PowerPoint link works only on Windows.</Warning>);
   }
   const loading =
     (!status.speech_model.ready && !status.speech_model.error) ||
-    (!status.meaning_model.ready && !status.meaning_model.error);
+    (!status.meaning_model.ready && !status.meaning_model.error) ||
+    (!status.voice.ready && !status.voice.error);
 
   return (
     <Stack gap={4}>
       {notes}
       {loading && (
         <Text fz={12} c={colors.muted}>
-          Loading speech models…
+          {status.voice.downloading ? "Downloading Flick's voice…" : 'Loading speech models…'}
         </Text>
       )}
     </Stack>

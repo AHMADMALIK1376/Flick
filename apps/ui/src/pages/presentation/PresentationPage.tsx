@@ -6,14 +6,16 @@
 import { Center, Loader, SimpleGrid, Stack } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/flick';
-import type { Answer, Deck, DeckSummary, PrepProgress, Settings } from '../../api/types';
+import type { Answer, Deck, DeckSummary, PrepProgress, Settings, Status } from '../../api/types';
 import { PageHeader } from '../../components/PageHeader';
 import { StatusPill } from '../../components/StatusPill';
 import { useFlickEvent } from '../../hooks/useEvents';
+import { usePresenter } from '../../hooks/usePresenter';
 import { DeckList } from './DeckList';
 import { DuringTalkCard } from './DuringTalkCard';
 import { EmptyState } from './EmptyState';
 import { PreparingState } from './PreparingState';
+import { PresentForMeCard } from './PresentForMeCard';
 import { ReadyState } from './ReadyState';
 import { RecentQuestionsCard } from './RecentQuestionsCard';
 
@@ -27,6 +29,28 @@ interface PageData {
 export function PresentationPage() {
   const [data, setData] = useState<PageData | null>(null);
   const [progress, setProgress] = useState<PrepProgress | null>(null);
+  const [voice, setVoice] = useState<Status['voice'] | null>(null);
+  const presenter = usePresenter();
+
+  // Flick's voice downloads once on first start: check until it's ready.
+  useEffect(() => {
+    let alive = true;
+    let timer: number | undefined;
+    const check = () =>
+      api
+        .status()
+        .then((s) => {
+          if (!alive) return;
+          setVoice(s.voice);
+          if (!s.voice.ready && !s.voice.error) timer = window.setTimeout(check, 4000);
+        })
+        .catch(() => alive && (timer = window.setTimeout(check, 4000)));
+    check();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const reload = useCallback(async () => {
     const [deck, decks, settings, log] = await Promise.all([
@@ -62,7 +86,9 @@ export function PresentationPage() {
   const askHotkey = settings?.ask_hotkey ?? 'Ctrl+Shift+Space';
   const explainHotkey = settings?.explain_hotkey ?? 'Ctrl+Shift+E';
 
-  const pill = !deck ? (
+  const pill = presenter.active ? (
+    <StatusPill tone="working">Flick is presenting</StatusPill>
+  ) : !deck ? (
     <StatusPill tone="neutral">No presentation loaded</StatusPill>
   ) : preparing ? (
     <StatusPill tone="working">Preparing questions…</StatusPill>
@@ -75,6 +101,8 @@ export function PresentationPage() {
   return (
     <Stack gap={24} maw={1200}>
       <PageHeader title="Presentation" subtitle="Load your slides, then ask Flick during your talk." actions={pill} />
+
+      {deck && !preparing && <PresentForMeCard deck={deck} presenter={presenter} voice={voice} askHotkey={askHotkey} />}
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing={24} style={{ alignItems: 'start' }}>
         <Stack gap={24}>

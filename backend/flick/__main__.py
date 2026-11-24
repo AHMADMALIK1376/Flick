@@ -22,6 +22,7 @@ from .powerpoint import PowerPointBridge
 from .semantic import LocalEmbedder
 from .service import FlickService
 from .transcribe import Transcriber
+from .voice import KokoroVoice, Speaker
 
 
 def default_data_dir() -> Path:
@@ -42,6 +43,11 @@ def build_service(data_dir: Path) -> FlickService:
         get_model=lambda: db.get_settings().model,
     )
     models = data_dir / "models"  # downloaded once, on first run
+    speaker = Speaker(
+        KokoroVoice(models / "voice"),
+        cache_dir=data_dir / "voice-cache",
+        settings=lambda: (db.get_settings().voice_name, db.get_settings().voice_speed),
+    )
     return FlickService(
         db,
         llm,
@@ -49,6 +55,7 @@ def build_service(data_dir: Path) -> FlickService:
         EventBus(),
         embedder=LocalEmbedder(models / "meaning"),
         transcriber=Transcriber(models / "whisper"),
+        speaker=speaker,
     )
 
 

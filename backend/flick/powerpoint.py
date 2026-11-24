@@ -1,5 +1,6 @@
-"""Asks the running Microsoft PowerPoint (Windows) which slide is on screen and
-which file is open. Read-only: Flick never changes the presentation.
+"""Talks to the running Microsoft PowerPoint (Windows): which slide is on screen,
+which file is open, and (for "present for me") showing a slide in the slide show.
+Flick never edits the presentation.
 
 Uses PowerPoint's COM automation directly through pywin32, which answers in a
 few milliseconds. Without pywin32 it falls back to PowerShell (about half a
@@ -69,6 +70,41 @@ def _com_query(kind: str) -> Optional[str]:
         pythoncom.CoUninitialize()
 
 
+def _com_show_slide(number: int) -> bool:
+    """Runs in a worker thread. Shows slide `number` full screen, starting the slide show if needed."""
+    import pythoncom  # type: ignore
+    import win32com.client  # type: ignore
+
+    pythoncom.CoInitialize()
+    try:
+        try:
+            app = win32com.client.GetActiveObject("PowerPoint.Application")
+        except Exception:
+            return False
+        try:
+            if app.SlideShowWindows.Count:
+                view = app.SlideShowWindows(1).View
+            elif app.Presentations.Count:
+                view = app.ActivePresentation.SlideShowSettings.Run().View
+            else:
+                return False
+            view.GotoSlide(number)
+            return True
+        except Exception:
+            return False
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def _ps_show_slide(number: int) -> str:
+    return _ATTACH + rf"""
+if ($pp.SlideShowWindows.Count -gt 0) {{ $v = $pp.SlideShowWindows.Item(1).View }}
+elseif ($pp.Presentations.Count -gt 0) {{ $v = $pp.ActivePresentation.SlideShowSettings.Run().View }}
+else {{ exit 0 }}
+$v.GotoSlide({int(number)}); 'ok'
+"""
+
+
 def _powershell(script: str) -> Optional[str]:
     try:
         out = subprocess.run(
@@ -99,6 +135,7 @@ class PowerPointBridge:
         query: Optional[Callable[[str], Optional[str]]] = None,
         platform: str = sys.platform,
         clock: Callable[[], float] = time.monotonic,
+        show: Optional[Callable[[int], bool]] = None,
     ):
         self.supported = platform == "win32"
         if query is not None:
@@ -108,6 +145,12 @@ class PowerPointBridge:
         else:
             self._query = lambda kind: _powershell(_PS_SLIDE if kind == "slide" else _PS_PATH)
         self._clock = clock
+        if show is not None:
+            self._show: Callable[[int], bool] = show
+        elif self.supported and _has_pywin32():
+            self._show = _com_show_slide
+        else:
+            self._show = lambda n: _powershell(_ps_show_slide(n)) == "ok"
         self._cached: Optional[tuple[Optional[int], float]] = None
         self._in_flight: Optional[asyncio.Task] = None
 
@@ -126,6 +169,15 @@ class PowerPointBridge:
             return self._cached[0]
         self._in_flight = asyncio.ensure_future(self._read_slide())
         return await asyncio.shield(self._in_flight)
+
+    async def show_slide(self, number: int) -> bool:
+        """Shows slide `number` in the slide show (starting it if needed). False if PowerPoint isn't there."""
+        if not self.supported:
+            return False
+        ok = await asyncio.to_thread(self._show, number)
+        if ok:
+            self._cached = (number, self._clock())
+        return ok
 
     async def active_presentation_path(self) -> Optional[str]:
         if not self.supported:
