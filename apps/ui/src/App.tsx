@@ -3,7 +3,10 @@
 //   Main window (with sidebar):  #/presentation  #/questions  #/log  #/settings
 //   First run:                   #/onboarding
 //   Separate Electron windows:   #/card  #/mic  #/presenter
+import { Center, Loader } from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { api } from './api/flick';
 import { AppLayout } from './layout/AppLayout';
 import { OnboardingFlow } from './pages/onboarding/OnboardingFlow';
 import { PresentationPage } from './pages/presentation/PresentationPage';
@@ -31,9 +34,29 @@ export function App() {
         <Route path="/mic" element={<MicWidget />} />
         <Route path="/presenter" element={<PresenterView />} />
 
-        {/* TODO(#3): go to /onboarding instead when no API key is saved */}
-        <Route path="*" element={<Navigate to="/presentation" replace />} />
+        <Route path="*" element={<StartRedirect />} />
       </Routes>
     </HashRouter>
   );
+}
+
+/** First open: onboarding when no Claude key is saved yet, otherwise the Presentation page. */
+function StartRedirect() {
+  const [target, setTarget] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getSettings()
+      .then((s) => setTarget(s.has_api_key ? '/presentation' : '/onboarding'))
+      .catch(() => setTarget('/presentation')); // backend down: the sidebar shows the problem
+  }, []);
+
+  if (!target) {
+    return (
+      <Center h="100vh">
+        <Loader color="plum" />
+      </Center>
+    );
+  }
+  return <Navigate to={target} replace />;
 }
