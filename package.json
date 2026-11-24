@@ -4,18 +4,14 @@
   "private": true,
   "description": "Flick: a voice assistant that answers audience questions during presentations, from your slides or the web.",
   "scripts": {
-    "setup": "cd apps/electron && npm install && cd ../.. && cd apps/desktop && npm install",
-    "dev:electron": "cd apps/electron && npm run dev",
-    "dev:web": "cd apps/desktop && npx next dev",
-    "build:electron": "cd apps/electron && npm run build",
-    "build:web": "cd apps/desktop && npx next build",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
-  },
-  "devDependencies": {
-    "prettier": "^3.1.0"
+    "setup": "cd backend && pip install -r requirements.txt && cd ../apps/ui && npm install && npm run build && cd ../electron && npm install",
+    "start": "cd apps/electron && npm start",
+    "dev:ui": "cd apps/ui && npm run dev",
+    "dev:desktop": "cd apps/electron && npm run dev",
+    "test": "cd backend && python -m pytest -q && cd ../apps/ui && npm test && cd ../electron && npm test"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19.0"
   },
   "license": "MIT"
 }
