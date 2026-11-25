@@ -18,7 +18,17 @@ from flick.service import FlickService
 
 
 class FakeLLM:
-    """Records calls (as plain text); answers from a script. `fail` raises that error kind instead."""
+    """Records calls (as plain text); answers from a script. `fail` raises that error kind instead.
+    Every successful call is counted by the Token Analyzer as 1000 input + 100 output tokens."""
+
+    meter = None  # set by FlickService
+
+    def _count(self, searches: int = 0):
+        if self.meter is not None:
+            usage = {"input_tokens": 1000, "output_tokens": 100}
+            if searches:
+                usage["server_tool_use"] = {"web_search_requests": searches}
+            self.meter.record("claude-haiku-5-5", usage)
 
     def __init__(self, complete_text="TEXT", search: Optional[SearchResult] = None, fail: Optional[str] = None):
         self.complete_text = complete_text
@@ -35,6 +45,7 @@ class FakeLLM:
         self.complete_calls.append((system, message_text(message)))
         if self.fail:
             raise LLMError(self.fail, "boom")
+        self._count()
         return self._text(system, message)
 
     async def check_key(self):
@@ -46,6 +57,7 @@ class FakeLLM:
         self.raw_search_messages.append(message)
         if self.fail:
             raise LLMError(self.fail, "boom")
+        self._count(searches=1 if self.search.searched else 0)
         return self.search
 
     async def stream_complete(self, system, message, max_tokens, on_text):

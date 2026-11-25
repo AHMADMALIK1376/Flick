@@ -13,6 +13,7 @@ import { useCanvas } from '../../hooks/useCanvas';
 import { useFlickEvent } from '../../hooks/useEvents';
 import type { Presenter } from '../../hooks/usePresenter';
 import { colors } from '../../theme';
+import { AskPanel } from '../../windows/mic/AskPanel';
 import { useAskFlow } from '../../windows/mic/useAskFlow';
 import { QUICK_ASKS, STUDY_MODES } from './modes';
 
@@ -175,6 +176,11 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
       </SimpleGrid>
 
       <Card>
+        {mic.phase !== 'idle' && mic.phase !== 'done' && (
+          <Box mb={12}>
+            <AskPanel flow={mic} />
+          </Box>
+        )}
         <Group gap={10} wrap="nowrap">
           <TextInput
             size="md"
@@ -192,7 +198,7 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
               variant={mic.phase === 'listening' ? 'filled' : 'default'}
               color={mic.phase === 'listening' ? 'red' : undefined}
               aria-label="Ask by voice"
-              loading={mic.phase === 'answering'}
+              loading={mic.phase === 'answering' || mic.phase === 'writing'}
               onClick={mic.toggle}
             >
               {mic.phase === 'listening' ? <IconPlayerStop size={18} /> : <IconMicrophone size={18} />}

@@ -14,6 +14,7 @@ import type {
   Settings,
   SettingsUpdate,
   Status,
+  UsageReport,
 } from './types';
 
 export const api = {
@@ -50,8 +51,20 @@ export const api = {
     request<PredictedQuestion>('PATCH', `/questions/${id}`, changes),
   deleteQuestion: (id: string) => request<void>('DELETE', `/questions/${id}`),
 
+  // ── Token Analyzer ──
+  usage: () => request<UsageReport>('GET', '/usage'),
+  clearUsage: () => request<void>('DELETE', '/usage'),
+
   // ── Live ──
   questionStarting: () => request<void>('POST', '/question-starting'),
+  /** The asker pressed ✕ or the mic closed by itself: a paused talk carries on. */
+  questionCancelled: () => request<void>('POST', '/question-cancelled'),
+  /** Speech → text only (shown live while speaking, and for editing before sending). */
+  transcribe: (audio: Blob) => {
+    const form = new FormData();
+    form.append('audio', audio, 'question.webm');
+    return request<{ text: string; duration_ms: number }>('POST', '/transcribe', form);
+  },
   ask: (text: string) => request<Answer | null>('POST', '/ask', { text }),
   /** slide: a number, or leave empty for the slide on screen. */
   explain: (slide?: number) => request<Answer>('POST', '/explain', { slide: slide ?? null }),

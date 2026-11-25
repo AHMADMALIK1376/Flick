@@ -1,13 +1,14 @@
 // Issue #9 · Design screen: L3 Mic / Tray / Icon
 //
-// Small round floating button (Electron opens #/mic). Click: start / stop recording.
-// States: idle, listening, answering, done.
-import { Box, Center, Loader, Text, UnstyledButton } from '@mantine/core';
+// Small round floating button (Electron opens #/mic). Click: ask by voice.
+// While asking it becomes the question box (AskPanel): live words, edit, ✓ / ✕.
+import { Box, Center, Text, UnstyledButton } from '@mantine/core';
 import { IconCheck, IconMicrophone } from '@tabler/icons-react';
 import { useEffect, useRef } from 'react';
 import { desktop } from '../../desktop';
 import { colors } from '../../theme';
 import { useTransparentWindow } from '../useTransparentWindow';
+import { AskPanel } from './AskPanel';
 import { useAskFlow } from './useAskFlow';
 
 const circle = {
@@ -21,12 +22,27 @@ const circle = {
 
 export function MicWidget() {
   useTransparentWindow();
-  const { phase, note, toggle } = useAskFlow();
+  const flow = useAskFlow();
+  const { phase, note, toggle } = flow;
+  const panel = phase === 'listening' || phase === 'writing' || phase === 'review' || phase === 'answering';
 
-  // Desktop app: the Ask hotkey (Ctrl+Shift+Space) starts / stops recording here.
+  // Desktop app: the Ask hotkey (Ctrl+Shift+Space) starts, stops, or sends.
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
   useEffect(() => desktop?.onToggleAsk(() => toggleRef.current()), []);
+
+  // The window grows into the question box, and can take typing only while it is one.
+  useEffect(() => {
+    desktop?.setMicMode?.(panel ? 'panel' : 'button');
+  }, [panel]);
+
+  if (panel) {
+    return (
+      <Box h="100vh" p={8} style={{ display: 'flex', alignItems: 'flex-end' }}>
+        <AskPanel flow={flow} />
+      </Box>
+    );
+  }
 
   return (
     <Center h="100vh" style={{ flexDirection: 'column', gap: 4 }}>
@@ -38,38 +54,6 @@ export function MicWidget() {
         >
           <IconMicrophone size={22} color={colors.plum} />
         </UnstyledButton>
-      )}
-
-      {phase === 'listening' && (
-        <UnstyledButton
-          aria-label="Stop and ask"
-          role="status"
-          onClick={toggle}
-          style={{
-            width: 150,
-            height: 48,
-            borderRadius: 999,
-            background: colors.ink,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 12,
-            boxShadow: circle.boxShadow,
-          }}
-        >
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f28b82' }} />
-          <Box style={{ display: 'flex', alignItems: 'center', gap: 4, height: 22 }}>
-            {[0, 0.15, 0.3, 0.45, 0.6].map((delay) => (
-              <span key={delay} className="flick-bar" style={{ animationDelay: `${delay}s` }} />
-            ))}
-          </Box>
-        </UnstyledButton>
-      )}
-
-      {phase === 'answering' && (
-        <Box role="status" aria-label="Answering" style={{ ...circle, background: colors.surface, border: `1px solid ${colors.border}` }}>
-          <Loader size={22} color="aqua.6" />
-        </Box>
       )}
 
       {phase === 'done' && (

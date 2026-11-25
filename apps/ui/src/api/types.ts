@@ -165,6 +165,50 @@ export interface AskAudioResult {
 
 // ── Live events from the WebSocket /events ─────────────────────────────────
 
+// ── Token Analyzer ──────────────────────────────────────────────────────────
+
+export interface UsageSums {
+  calls: number;
+  input: number;
+  output: number;
+  cache_write: number;
+  cache_read: number;
+  searches: number;
+  tokens: number;
+  /** USD */
+  cost: number;
+}
+
+export type UsageCardType = 'presentation' | 'study' | 'slide' | 'questions' | 'prep';
+
+export interface UsageCard {
+  id: string;
+  type: UsageCardType;
+  type_name: string;
+  deck_id: string | null;
+  deck_name: string | null;
+  style: string | null;
+  slide: number | null;
+  title: string;
+  started_at: number;
+  ended_at: number | null;
+  totals: UsageSums;
+  /** What the tokens were for: talk, drawing, example, question, explain, prep */
+  by_kind: (UsageSums & { kind: string; name: string })[];
+  by_slide: (UsageSums & { slide: number | null })[];
+  models: string[];
+}
+
+export interface UsageReport {
+  total: UsageSums;
+  cards: UsageCard[];
+  kinds: Record<string, string>;
+  prices: Record<string, { input: number; output: number; cache_write: number; cache_read: number }>;
+  /** USD per web search */
+  web_search: number;
+  model: string;
+}
+
 /** Event name → the data it carries. */
 export interface FlickEventMap {
   thinking: { id: string; question: string }; // a question arrived, Flick is working
@@ -174,6 +218,7 @@ export interface FlickEventMap {
   prep_progress: PrepProgress; // preparing a deck
   present: PresentStatus; // presenting: slide, state, caption
   canvas: CanvasEvent; // the whiteboard: open a drawing, show the next step, close
+  usage: { card: UsageCard | null; total: UsageSums }; // a Claude call was counted (Token Analyzer)
 }
 
 export type FlickEventType = keyof FlickEventMap;

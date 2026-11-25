@@ -351,6 +351,38 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
 
     # ── Live ────────────────────────────────────────────────────────────────
 
+    @app.post("/question-cancelled", dependencies=auth, status_code=204)
+    async def question_cancelled():
+        """The asker pressed ✕ (or the mic closed by itself): a paused talk carries on."""
+        if service.presenter.state == "paused" and service.presenter.paused_for == "question":
+            service.presenter.resume()
+
+    # ── Token Analyzer ──────────────────────────────────────────────────────
+
+    @app.get("/usage", dependencies=auth)
+    async def usage_cards(limit: int = 100) -> dict:
+        from . import usage as usage_mod
+
+        return {
+            "total": service.usage.total(),
+            "cards": service.usage.cards(limit=max(1, min(limit, 300))),
+            "kinds": usage_mod.KINDS,
+            "prices": {m: {"input": p[0], "output": p[1], "cache_write": p[2], "cache_read": p[3]} for m, p in usage_mod.PRICES.items()},
+            "web_search": usage_mod.WEB_SEARCH_USD,
+            "model": service.db.get_settings().model,
+        }
+
+    @app.get("/usage/cards/{card_id}", dependencies=auth)
+    async def usage_card(card_id: str) -> dict:
+        card = service.usage.card(card_id)
+        if card is None:
+            raise HTTPException(status_code=404, detail="That card no longer exists.")
+        return card
+
+    @app.delete("/usage", dependencies=auth, status_code=204)
+    async def usage_clear():
+        service.usage.clear()
+
     @app.post("/question-starting", dependencies=auth, status_code=204)
     async def question_starting():
         # async: while presenting this pauses the talk, which needs the event loop.

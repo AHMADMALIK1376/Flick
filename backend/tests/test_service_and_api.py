@@ -147,7 +147,7 @@ def test_upload_ask_explain_log_and_events(client):
         assert r.status_code == 200 and r.json()["slide_count"] == 2
 
         events = [ws.receive_json() for _ in range(2)]
-        assert {e["type"] for e in events} == {"prep_progress"}
+        assert {e["type"] for e in events} - {"usage"} == {"prep_progress"}
 
         a = client.post("/ask", headers=H, json={"text": "Flick, explain this slide"}).json()
         assert a["origin"] == "explain" and a["current_slide"] == 2 and a["speak"]

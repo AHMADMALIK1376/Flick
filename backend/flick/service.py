@@ -15,6 +15,7 @@ Speed is the point, so:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from pathlib import Path
@@ -22,7 +23,7 @@ from typing import Optional
 
 import numpy as np
 
-from . import engine
+from . import engine, usage
 from .db import Database
 from .events import EventBus
 from .llm import LLM, LLMError
@@ -75,6 +76,10 @@ class FlickService:
         self.embedder = embedder
         self.transcriber = transcriber
         self.speaker = speaker
+        #: Token Analyzer: every Claude call is counted, by what it was for.
+        self.usage = usage.UsageMeter(db, events)
+        if hasattr(llm, "meter") and getattr(llm, "meter", None) is None:
+            llm.meter = self.usage  # type: ignore[attr-defined]
         self.presenter = Presenter(self)
         self._plans: dict[tuple[str, int, str], asyncio.Task] = {}  # slide plans being made
         self._drawings: dict[tuple[str, int, str], asyncio.Task] = {}  # drawing decisions being made
@@ -145,6 +150,15 @@ class FlickService:
         return await self.load_deck(path)
 
     async def prepare_deck(self, deck_id: str) -> None:
+        deck = self.db.get_deck(deck_id)
+        card = usage.LazyCard(
+            "prep", f"Getting {deck.name if deck else 'the deck'} ready", deck_id=deck_id,
+            deck_name=deck.name if deck else None, key=f"prep:{deck_id}:{int(time.time())}",
+        )
+        with usage.tagged(kind="prep", card=card, deck_id=deck_id):
+            await self._prepare_deck(deck_id)
+
+    async def _prepare_deck(self, deck_id: str) -> None:
         """
         Before the talk: predicts likely questions, indexes them by meaning, then
         writes every slide's explanation. Safe to call repeatedly.
@@ -252,8 +266,17 @@ class FlickService:
 
     async def ask(self, raw: str) -> Optional[Answer]:
         """Answers a spoken or typed question. None when nothing was heard."""
+        deck = self.active_deck()
+        day = time.strftime("%Y-%m-%d")
+        card = self.usage_card(
+            "questions", f"Questions · {deck.name if deck else 'no deck'} · {time.strftime('%d %b')}", deck,
+            key=f"questions:{deck.id if deck else '-'}:{day}",
+        )
+        style = self.presenter.style if self.presenter.active else None
+        slide = self.presenter.slide if self.presenter.active else None
         try:
-            return await self._ask(raw)
+            with usage.tagged(kind="question", card=card, deck_id=deck.id if deck else None, style=style, slide=slide):
+                return await self._ask(raw)
         finally:
             # A raised hand during the talk: continue once the answer has been said.
             if self.presenter.paused_for == "question":
@@ -343,6 +366,14 @@ class FlickService:
     async def explain_slide(
         self, target: SlideTarget = SlideTarget("current"), request: str = "Explain this slide to the audience."
     ) -> Answer:
+        deck = self.active_deck()
+        card = self.usage_card("slide", "Slide {slide} explained", deck)
+        with usage.tagged(kind="explain", card=card):
+            return await self._explain_slide(target, request)
+
+    async def _explain_slide(
+        self, target: SlideTarget, request: str
+    ) -> Answer:
         """Explains a slide to the audience. Always spoken: the presenter asked Flick to talk to the room."""
         started = time.time()
         deck = self.active_deck()
@@ -366,6 +397,7 @@ class FlickService:
             )
             return self._finish(self._error(request, message, None, started), deck)
 
+        usage.set_tag(slide=number)
         slide = next((s for s in deck.slides if s.number == number), None)
         label = f"Explain slide {number}: {slide.title or 'untitled'}" if slide else f"Explain slide {number}"
         if slide is None:
@@ -491,6 +523,12 @@ class FlickService:
         self.speaker.say(text)
         return True
 
+    def usage_card(self, type: str, title: str, deck: Optional[Deck], key: Optional[str] = None) -> "str | usage.LazyCard | None":
+        """The Token Analyzer card a call belongs to: the running talk's, or a new one."""
+        if self.presenter.active and self.presenter.usage_card:
+            return self.presenter.usage_card
+        return usage.LazyCard(type, title, deck_id=deck.id if deck else None, deck_name=deck.name if deck else None, key=key)
+
     def speech_epoch(self) -> int:
         return self.speaker.epoch if self.speaker else 0
 
@@ -576,7 +614,8 @@ class FlickService:
         key = (deck.id, number, style)
         task = self._plans.get(key)
         if task is None or (task.done() and task.exception() is not None):
-            task = asyncio.ensure_future(self._make_plan(deck, number, style))
+            with usage.tagged(kind="talk", slide=number, style=style, deck_id=deck.id):
+                task = asyncio.ensure_future(self._make_plan(deck, number, style))
             self._plans[key] = task
         try:
             text, drawing = await asyncio.shield(task)
@@ -597,10 +636,15 @@ class FlickService:
         if cached is not None:
             return cached, self.db.get_drawing(deck.id, number, style)[1]
         previous = self.db.get_lesson(deck.id, number - 1, style)
-        raw = await self.llm.complete(
-            lessons.lesson_system(style), lessons.lesson_message(deck, number, previous), lessons.LESSON_MAX_TOKENS
-        )
+        with usage.tagged(kind="talk", sink=[]) as tag:
+            raw = await self.llm.complete(
+                lessons.lesson_system(style), lessons.lesson_message(deck, number, previous), lessons.LESSON_MAX_TOKENS
+            )
         text, drawing = lessons.parse_lesson(raw)
+        if drawing and text:
+            # One reply wrote both: show the drawing's part under "Whiteboard drawings".
+            drawn = len(json.dumps(drawing, ensure_ascii=False))
+            self.usage.split(tag.sink or [], "drawing", drawn / (drawn + len(text)))
         if not text:
             raise LLMError("empty_response", "no lesson text")
         self.db.save_lesson(deck.id, number, style, text)
@@ -629,7 +673,8 @@ class FlickService:
                 self.db.save_drawing(deck.id, number, style, result)
                 return result
 
-            task = asyncio.ensure_future(decide())
+            with usage.tagged(kind="drawing", slide=number, style=style, deck_id=deck.id):
+                task = asyncio.ensure_future(decide())
             self._drawings[key] = task
         return task
 
@@ -676,12 +721,14 @@ class FlickService:
             context = self.db.get_lesson(deck.id, number, style) or self.db.get_explanation(deck.id, number)
         answer_id = str(uuid.uuid4())
         self.events.publish("thinking", {"id": answer_id, "question": question})
+        card = self.usage_card("slide", "Example drawn · slide {slide}", deck)
         try:
-            raw = await self.llm.complete(
-                lessons.draw_system(style, asked=True),
-                lessons.draw_message(deck, slide, context, question),
-                lessons.DRAW_MAX_TOKENS,
-            )
+            with usage.tagged(kind="example", card=card, slide=number, style=style):
+                raw = await self.llm.complete(
+                    lessons.draw_system(style, asked=True),
+                    lessons.draw_message(deck, slide, context, question),
+                    lessons.DRAW_MAX_TOKENS,
+                )
         except LLMError:
             return None
         drawing = lessons.parse_drawing(raw)
