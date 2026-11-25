@@ -358,3 +358,37 @@ async def test_presenter_reports_when_powerpoint_does_not_follow(db, tmp_path):
     assert "isn't open in PowerPoint" in service.presenter.status()["powerpoint"]
     service.presenter.stop()
     speaker.close()
+
+
+async def test_shutting_down_while_a_sentence_is_being_made_does_not_hang(tmp_path):
+    import threading
+
+    from .conftest import FakeVoice
+
+    release = threading.Event()
+
+    class SlowVoice(FakeVoice):
+        def synthesize(self, text, voice, speed):
+            release.wait(2)  # still making the audio when the app shuts down
+            return super().synthesize(text, voice, speed)
+
+    speaker = make_speaker(tmp_path, voice=SlowVoice())
+    speaker.say("A long sentence that takes a while to make.")
+    await asyncio.sleep(0.05)
+    worker = speaker._worker
+    worker.cancel()  # what the app's event loop does on shutdown
+    try:
+        await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), 1)
+    finally:
+        release.set()
+        speaker.close()
+    assert worker.done()
+
+
+async def test_stop_while_a_sentence_is_being_made_keeps_the_speaker_working(tmp_path):
+    speaker = make_speaker(tmp_path)
+    first = speaker.say("First sentence here.")
+    speaker.stop()  # Stop: skip it, but stay ready
+    assert await first is False
+    assert await asyncio.wait_for(speaker.say("Next one."), 3) is True
+    speaker.close()

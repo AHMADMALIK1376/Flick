@@ -35,13 +35,39 @@ SLIDE_GAP_S = 0.6
 #: After a slide was explained, how long to wait for a drawing that is still being planned.
 DRAWING_WAIT_S = 6.0
 
-GREETING = "Hello everyone."
-STUDY_GREETING = "Let's study this together."
-CONTINUE = "Now, let's continue."
-CLOSING = "That's the end of the presentation. Thank you for listening! Are there any questions?"
-STUDY_CLOSING = "That's the whole presentation. Well done! Ask me anything you'd like to go over again."
-DRAW_INTRO = {"story": "Let me draw this part of the story."}
-DRAW_INTRO_DEFAULT = "Let me draw this to make it clearer."
+# What Flick says between slides. Lines that come up more than once in a talk rotate, so Flick
+# never sounds like a recording ("Now, let's continue." five times in a row is what robots do).
+GREETING = "Hi everyone! Thanks for being here."
+STUDY_GREETING = "Hey! Let's go through this together, one step at a time."
+CONTINUES = [
+    "Okay, let's pick up where we left off.",
+    "Alright, back to where we were.",
+    "Good. Let's keep going.",
+    "Right, so, where were we? Let's carry on.",
+]
+CONTINUE = CONTINUES[0]
+CLOSING = "And that's everything from me today. Thank you so much for listening! Any questions? I'm happy to help."
+STUDY_CLOSING = "And that's the whole thing. Nice work sticking with it! Anything you'd like me to go over again?"
+DRAW_INTROS = {
+    "story": [
+        "Let me draw this part of the story.",
+        "Picture this. Let me sketch it.",
+        "Here, let me show you what happened.",
+    ],
+    "exam": [
+        "Let me draw this, it's easier to remember as a picture.",
+        "Quick sketch, this is the picture to keep in your head.",
+    ],
+}
+DRAW_INTROS_DEFAULT = [
+    "Let me draw this to make it clearer.",
+    "Actually, this is easier to see. Let me sketch it.",
+    "Let me show you on the board.",
+    "Okay, let me draw this out.",
+]
+DRAW_INTRO_DEFAULT = DRAW_INTROS_DEFAULT[0]
+#: A new explanation for "explain slide 6 again": worth a short wait (the intro covers most of it).
+FRESH_WAIT_S = 15.0
 #: A drawing someone asked for ("go back to slide 6 and draw it"): worth waiting longer for.
 ASKED_DRAWING_WAIT_S = 30.0
 ASKED_DRAW_INTRO = {"example": "Let me draw a real-life example.", "draw": "Let me draw it for you."}
@@ -91,6 +117,7 @@ class Presenter:
         self._stopped = False
         self._jump: Optional[int] = None
         self._detour: Optional[_Detour] = None
+        self._said_count: dict[str, int] = {}  # rotating lines: how often each kind was said this talk
         self._question_timer: Optional[asyncio.TimerHandle] = None
         self._just_resumed = False
 
@@ -128,6 +155,11 @@ class Presenter:
             self.powerpoint = problem
             self._publish()
 
+    @property
+    def plan_key(self) -> str:
+        """What Flick says is written for the audience: a class (teacher) or one student (a friend)."""
+        return self.style + ("@study" if self.study else "")
+
     def _publish(self) -> None:
         self.service.events.publish("present", self.status())
 
@@ -148,6 +180,7 @@ class Presenter:
         self._stopped = False
         self._jump = None
         self._detour = None
+        self._said_count = {}
         self._unpaused.set()
         self.state = "starting"
         meter = self.service.usage
@@ -261,7 +294,7 @@ class Presenter:
         await self._unpaused.wait()
         if self._just_resumed and not self._stopped and self._jump is None:
             self._just_resumed = False
-            await self._say(CONTINUE)
+            await self._say(self._rotate("continue", CONTINUES))
         self._just_resumed = False
 
     async def _speak(self, segments: list[_Segment]) -> None:
@@ -279,10 +312,18 @@ class Presenter:
             if not segment.text or await self._say(segment.text):
                 i += 1
 
+    def _rotate(self, kind: str, lines: list[str]) -> str:
+        """The next line of this kind: first time the first one, then the others in turn."""
+        n = self._said_count.get(kind, 0)
+        self._said_count[kind] = n + 1
+        return lines[n % len(lines)]
+
     def _drawing_segments(self, drawing: dict, slide: int, intro: bool = True) -> list[_Segment]:
         canvas_id = str(uuid.uuid4())
         opened = {"action": "open", "id": canvas_id, "slide": slide, "target": self.target, **drawing}
-        segments = [_Segment(DRAW_INTRO.get(self.style.partition('+')[0], DRAW_INTRO_DEFAULT) if intro else "", opened)]
+        base = self.style.split("@")[0].partition("+")[0]
+        intros = DRAW_INTROS.get(base, DRAW_INTROS_DEFAULT)
+        segments = [_Segment(self._rotate(f"draw:{base}", intros) if intro else "", opened)]
         for number, step in enumerate(drawing["steps"], start=1):
             event = {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": self.target}
             for k, sentence in enumerate(split_sentences(step["say"])):
@@ -306,12 +347,15 @@ class Presenter:
                 self._publish()
 
                 detour = self._detour if self._detour and self._detour.slide == n and not self._detour.started else None
+                fresh = None
                 if detour:
                     detour.started = True
+                    # Explained again: in new words (written while Flick says "Sure, let's go back...").
+                    fresh = service.fresh_explanation(deck, n, self.plan_key, detour.request)
                     if detour.board != "auto":  # start drawing now, while the slide is explained
                         asked = service.requested_drawing(deck, n, self.style, detour.board, detour.request)
                     if detour.back == n:
-                        intro = "Sure, let me explain this slide again."
+                        intro = "Sure, let me go over that again, a different way."
                     elif detour.back and detour.back > n:
                         intro = f"Sure. Let's go back to slide {n}."
                     else:
@@ -324,10 +368,12 @@ class Presenter:
                         continue
 
                 # What to say now; the drawing (if any) is planned meanwhile.
-                text, drawing_job = await service.slide_plan(deck, n, self.style)
+                text, drawing_job = await service.slide_plan(deck, n, self.plan_key)
+                if fresh is not None:
+                    text = await _text_result(fresh, FRESH_WAIT_S) or text
                 if detour and detour.board != "auto":
                     drawing_job = asked
-                service.prefetch_slide_plan(deck, n + 1, self.style)
+                service.prefetch_slide_plan(deck, n + 1, self.plan_key)
                 sentences = split_sentences(text)
                 if first and n == 1 and not _GREETS.match(text.strip().lower()):
                     sentences.insert(0, STUDY_GREETING if self.study else GREETING)
@@ -355,7 +401,7 @@ class Presenter:
                     self._detour = None
                     if detour.back and detour.back != n:
                         self._close_canvas()
-                        await self._speak([_Segment(f"Now, back to slide {detour.back}.")])
+                        await self._speak([_Segment(f"Okay! Now, back to slide {detour.back}, where we were.")])
                         if self._stopped:
                             return
                         if self._jump is not None:
@@ -377,6 +423,14 @@ class Presenter:
             self.state = "error"
             self.message = f"Presenting stopped: {err}"
             self._publish()
+
+
+async def _text_result(job: "asyncio.Future", timeout: float) -> Optional[str]:
+    try:
+        text = await asyncio.wait_for(asyncio.shield(job), timeout)
+    except Exception:
+        return None
+    return text.strip() or None if isinstance(text, str) else None
 
 
 async def _result(job: "Optional[asyncio.Future]", timeout: float) -> Optional[dict]:

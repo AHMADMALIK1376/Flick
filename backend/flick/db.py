@@ -128,6 +128,27 @@ class Database:
             )
             self._conn.commit()
 
+    def refresh_spoken_text(self, version: int) -> bool:
+        """When Flick's way of talking changed: forget the slide explanations, study lessons and
+        drawings written in the old voice (they are written again). True if anything was reset."""
+        key = "__voice_version"
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            if row is not None and json.loads(row["value"]) == version:
+                return False
+            had_text = self._conn.execute(
+                "SELECT (SELECT COUNT(*) FROM slide_explanations) + (SELECT COUNT(*) FROM lessons)"
+            ).fetchone()[0]
+            self._conn.execute("DELETE FROM slide_explanations")
+            self._conn.execute("DELETE FROM lessons")
+            self._conn.execute("DELETE FROM drawings")
+            self._conn.execute(
+                "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(version)),
+            )
+            self._conn.commit()
+        return bool(had_text)
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

@@ -42,12 +42,12 @@ class ScriptedLLM(FakeLLM):
 
     async def complete(self, system, message, max_tokens=700):
         self.systems.append(system)
-        if "helping a university student study" in system:
+        if "explaining a presentation out loud, one slide at a time" in system:
             mode = "story" if "STORY MODE" in system else "exam" if "EXAM MODE" in system else "pro"
             return json.dumps({"text": f"In {mode} style. Ali opens his bank app.", "drawing": self.lesson_drawing})
         if "always draw" in system:
             return json.dumps({"drawing": self.asked_drawing})
-        if "Plan ONE small drawing" in system:
+        if "Plan ONE drawing" in system:
             return json.dumps({"drawing": self.auto_drawing})
         return await super().complete(system, message, max_tokens)
 
@@ -200,7 +200,7 @@ async def test_study_session_in_each_style(db, tmp_path, style, word):
 
     assert f"In {word} style." in speaker.played_texts
     assert service.shown_slides == []  # study: PowerPoint is never touched
-    assert service.db.get_lesson(deck.id, 2, style)  # lessons are cached
+    assert service.db.get_lesson(deck.id, 2, f"{style}@study")  # lessons are cached (apart from class talks)
     opened = [d for k, d in events if k == "canvas" and d["action"] == "open"]
     assert all(o["target"] == "study" for o in opened)
     assert (len(opened) > 0) == (style == "story")

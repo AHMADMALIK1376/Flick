@@ -58,17 +58,27 @@ async def deck_with(service, n=8):
 
 
 async def test_during_a_talk_it_goes_back_explains_and_returns(db, tmp_path):
+    asks = []
+
+    def reply(system, message):
+        asks.append(message)
+        return "Okay so think of it like a bank locker." if "go over this again" in message else "TEXT"
+
     speaker = make_speaker(tmp_path)
-    service = make_service(db, speaker=speaker)
+    service = make_service(db, FakeLLM(complete_text=reply), speaker=speaker)
     await deck_with(service)
     service.start_presenting(from_slide=8)
     await wait_for(lambda: service.presenter.state == "presenting" and service.presenter.slide == 8)
     service.question_starting()  # the mic: raise hand
     answer = await service.ask("Flick, go to slide number 6 and explain me again slide number 6")
     assert answer.origin == "explain" and "back to slide 8" in answer.answer
-    await wait_for(lambda: "Now, back to slide 8." in speaker.played_texts, timeout=10)
+    back = "Okay! Now, back to slide 8, where we were."
+    await wait_for(lambda: back in speaker.played_texts, timeout=10)
     said = speaker.played_texts
-    assert said.index("Sure. Let's go back to slide 6.") < said.index("Slide 6 explained.") < said.index("Now, back to slide 8.")
+    # Explained again in NEW words (not the saved explanation), then back to 8.
+    assert said.index("Sure. Let's go back to slide 6.") < said.index("Okay so think of it like a bank locker.") < said.index(back)
+    assert "Slide 6 explained." not in said
+    assert any("Last time you said: \"Slide 6 explained.\"" in m for m in asks)
     await wait_for(lambda: service.presenter.state == "finished", timeout=10)
     assert service.shown_slides[-2:] == [6, 8]  # PowerPoint went to 6 and came back to 8
     assert said[-2] == "Slide 8 explained."  # slide 8 again, then the closing
@@ -106,7 +116,7 @@ async def test_go_to_slide_carries_on_from_there(db, tmp_path):
     await wait_for(lambda: service.presenter.state == "presenting")
     await service.ask("Flick, go to slide 3")
     await wait_for(lambda: service.presenter.state == "finished", timeout=10)
-    assert "Now, back to slide" not in " ".join(speaker.played_texts)
+    assert "back to slide" not in " ".join(speaker.played_texts)
     assert speaker.played_texts.index("Slide 3 explained.") < speaker.played_texts.index("Slide 4 explained.")
     assert "Slide 2 explained." not in speaker.played_texts or speaker.played_texts.index("Slide 2 explained.") < speaker.played_texts.index("Slide 3 explained.")
     speaker.close()
