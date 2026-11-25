@@ -8,6 +8,8 @@ export interface FlickDesktop {
   onListening(callback: (listening: boolean) => void): () => void;
   showCard(): void;
   hideCard(): void;
+  showCanvas(): void;
+  hideCanvas(): void;
 }
 
 declare global {

@@ -31,6 +31,8 @@ Before you push: `npm run typecheck`, `npm test`, `npm run build` (CI runs these
 | #2 Setup | sidebar, theme, logo | `src/layout/*`, `src/theme.ts` |
 | #3 Onboarding | O1–O4 | `src/pages/onboarding/*` |
 | #4 Presentation | D1, D3, D2 | `src/pages/presentation/*` |
+| Study sessions | Study | `src/pages/study/*` |
+| Whiteboard | Canvas | `src/components/whiteboard/*`, `src/windows/canvas/*` (preview: `#/canvas?demo=1`) |
 | #5 Prepared Questions | D4 | `src/pages/questions/*` |
 | #6 Q&A Log | D5 | `src/pages/log/*` |
 | #7 Settings | D6 | `src/pages/settings/SettingsPage.tsx` |

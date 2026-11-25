@@ -13,7 +13,9 @@ import { PresentationPage } from './pages/presentation/PresentationPage';
 import { PreparedQuestionsPage } from './pages/questions/PreparedQuestionsPage';
 import { QaLogPage } from './pages/log/QaLogPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { StudyPage } from './pages/study/StudyPage';
 import { AnswerCard } from './windows/card/AnswerCard';
+import { CanvasWindow } from './windows/canvas/CanvasWindow';
 import { MicWidget } from './windows/mic/MicWidget';
 import { PresenterView } from './windows/presenter/PresenterView';
 
@@ -23,6 +25,7 @@ export function App() {
       <Routes>
         <Route element={<AppLayout />}>
           <Route path="/presentation" element={<PresentationPage />} />
+          <Route path="/study" element={<StudyPage />} />
           <Route path="/questions" element={<PreparedQuestionsPage />} />
           <Route path="/log" element={<QaLogPage />} />
           <Route path="/settings" element={<SettingsPage />} />
@@ -31,6 +34,7 @@ export function App() {
         <Route path="/onboarding" element={<OnboardingFlow />} />
 
         <Route path="/card" element={<AnswerCard />} />
+        <Route path="/canvas" element={<CanvasWindow />} />
         <Route path="/mic" element={<MicWidget />} />
         <Route path="/presenter" element={<PresenterView />} />
 

@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS slide_explanations (
     FOREIGN KEY (deck_id, number) REFERENCES slides(deck_id, number) ON DELETE CASCADE
 );
 
+-- Study lessons: what Flick says for a slide in a style (story / professional / exam).
+CREATE TABLE IF NOT EXISTS lessons (
+    deck_id TEXT NOT NULL,
+    number  INTEGER NOT NULL,
+    style   TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    PRIMARY KEY (deck_id, number, style),
+    FOREIGN KEY (deck_id, number) REFERENCES slides(deck_id, number) ON DELETE CASCADE
+);
+
+-- Whiteboard drawings Flick decided on for a slide and style. spec NULL = "no drawing needed".
+CREATE TABLE IF NOT EXISTS drawings (
+    deck_id TEXT NOT NULL,
+    number  INTEGER NOT NULL,
+    style   TEXT NOT NULL,
+    spec    TEXT,
+    PRIMARY KEY (deck_id, number, style),
+    FOREIGN KEY (deck_id, number) REFERENCES slides(deck_id, number) ON DELETE CASCADE
+);
+
 -- Meaning vectors of prepared questions, for matching questions by meaning.
 CREATE TABLE IF NOT EXISTS question_embeddings (
     question_id TEXT PRIMARY KEY REFERENCES predicted_questions(id) ON DELETE CASCADE,
@@ -313,6 +333,43 @@ class Database:
                 "INSERT INTO slide_explanations(deck_id, number, text) VALUES (?, ?, ?) "
                 "ON CONFLICT(deck_id, number) DO UPDATE SET text = excluded.text",
                 [(deck_id, n, t) for n, t in explanations.items()],
+            )
+            self._conn.commit()
+
+    # ── Study lessons and whiteboard drawings ──────────────────────────────
+
+    def get_lesson(self, deck_id: str, number: int, style: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT text FROM lessons WHERE deck_id = ? AND number = ? AND style = ?", (deck_id, number, style)
+            ).fetchone()
+        return row["text"] if row else None
+
+    def save_lesson(self, deck_id: str, number: int, style: str, text: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO lessons(deck_id, number, style, text) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(deck_id, number, style) DO UPDATE SET text = excluded.text",
+                (deck_id, number, style, text),
+            )
+            self._conn.commit()
+
+    def get_drawing(self, deck_id: str, number: int, style: str) -> tuple[bool, Optional[dict]]:
+        """→ (decided?, drawing). (True, None) means Flick decided no drawing is needed."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT spec FROM drawings WHERE deck_id = ? AND number = ? AND style = ?", (deck_id, number, style)
+            ).fetchone()
+        if row is None:
+            return False, None
+        return True, (json.loads(row["spec"]) if row["spec"] else None)
+
+    def save_drawing(self, deck_id: str, number: int, style: str, drawing: Optional[dict]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO drawings(deck_id, number, style, spec) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(deck_id, number, style) DO UPDATE SET spec = excluded.spec",
+                (deck_id, number, style, json.dumps(drawing, ensure_ascii=False) if drawing else None),
             )
             self._conn.commit()
 

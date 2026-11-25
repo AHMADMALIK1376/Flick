@@ -145,3 +145,41 @@ def parse_present_command(text: str, presenting: bool) -> Optional[PresentComman
         if _PRESENT_PREVIOUS.search(t):
             return "previous"
     return "start" if _PRESENT_START.search(t) else None
+
+
+# ── "Draw this" / "give me an example" / "explain with a story" ─────────────
+
+_DRAW = re.compile(
+    r"\b(draw|sketch|diagram|illustrate|visuali[sz]e|picture|whiteboard|canvas)\b"
+    r"|\bshow (me|us)\b.{0,20}\b(drawing|diagram|picture)\b"
+    r"|\b(bana|banao|bana do)\b"
+)
+_STORY = re.compile(r"\b(story|kahani|kahaani|qissa)\b")
+_EXAMPLE = re.compile(
+    r"\b(example|examples|real[- ]life|daily life|real world|misaal|misal|for instance)\b"
+    r"|\b(explain|samjha\w*)\b.{0,25}\b(simpl\w*|easy|easier|aasan)\b"
+)
+
+
+def parse_draw_request(text: str) -> Optional[str]:
+    """
+    'draw'    → "draw this", "can you draw it", "show me a diagram"
+    'story'   → "explain with a story", "tell me a story about this"
+    'example' → "give me an example", "real life example", "explain it simply"
+    None for everything else (normal questions, even ones about drawings or stories in the slides).
+    """
+    t = " ".join(re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split())
+    t = re.sub(r"^(hey |ok |okay )?flick\s*", "", t).strip()
+    if not t or len(t.split()) > 18:
+        return None
+    # "What is a story point?" / "Who drew the diagram?" are questions about the topic, not requests.
+    if re.match(r"^(what|who|when|where|which|why)\b", t) and not re.search(r"\b(example|draw|story)\b.{0,10}$", t):
+        return None
+    asks = re.search(r"\b(can you|could you|please|give|show|tell|explain|draw|sketch|make|do|karo|kar do|do na|me|se|samjha\w*|sunao|batao)\b", t)
+    if _STORY.search(t) and asks:
+        return "story"
+    if _DRAW.search(t):
+        return "draw"
+    if _EXAMPLE.search(t) and asks:
+        return "example"
+    return None

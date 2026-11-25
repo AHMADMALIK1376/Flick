@@ -30,6 +30,18 @@ The floating answer card shows **where the answer came from** (*Prepared answer*
 
 **"Present for me."** Tired, or need a hand? Press **Present for me** (or say *"Flick, present this for me"*). Flick runs the PowerPoint slide show and **gives the whole talk itself**: it explains every slide to the class in a **natural human voice**, with examples, and moves to the next slide on its own. When a student has a question, press the Ask hotkey: Flick **stops mid-sentence, listens, answers, says "Now, let's continue"** and carries on. Pause, next, previous and stop work any time, from the app, the floating card or by voice.
 
+**A smart whiteboard.** When an idea is hard to picture (a process, how parts relate, a comparison), Flick **draws it on a whiteboard while it explains**, step by step, in a hand-drawn style with everyday characters. It decides by itself: no drawing for a title or a simple list. Ask *"draw this"*, *"give me an example"* or *"explain it with a story"* and it always draws.
+
+**Study mode for students.** Teachers share slides before exams, and reading them all is a lot. On the **Study** page a student gives Flick the deck and picks how to learn it:
+
+| Mode | How Flick explains |
+|---|---|
+| 📖 **Story mode** | One continuing story with everyday characters (Ali, Sara, the chai dhaba); each slide is the next scene |
+| 💼 **Professional mode** | Precise and concise, with the right technical terms and a real industry example |
+| 🎯 **Exam mode** | Key points, definitions, a memory trick, and a likely exam question with a short model answer |
+
+Flick explains slide by slide in its voice, draws when it helps, and the student can stop it any time to ask a question, or tap **Draw this**, **Give an example**, **Tell it as a story** or **Simpler, please**. Teachers can use the same modes for "Present for me".
+
 **After the talk.** The **Q&A Log** keeps every question, answer and web source. Export it as CSV.
 
 ### Highlights

@@ -218,6 +218,7 @@ class Speaker:
         self._interrupt: Optional[asyncio.Event] = None
         self._worker: Optional[asyncio.Task] = None
         self.speaking = False
+        self._closed = False
 
     # Public ────────────────────────────────────────────────────────────────
 
@@ -226,8 +227,12 @@ class Speaker:
 
     def say(self, text: str) -> "asyncio.Future[bool]":
         """Queues one sentence. The future resolves when it has been said (True) or cut off (False)."""
-        self._ensure_worker()
         loop = asyncio.get_running_loop()
+        if self._closed:  # shutting down: nothing more is said
+            done = loop.create_future()
+            done.set_result(False)
+            return done
+        self._ensure_worker()
         item = _Item(text=text, clip=asyncio.wrap_future(self._make(text, urgent=True), loop=loop), done=loop.create_future())
         self._queue.append(item)
         self._idle.clear()  # type: ignore[union-attr]
@@ -236,7 +241,7 @@ class Speaker:
 
     def prefetch(self, texts: list[str], urgent: bool = False) -> None:
         """Makes audio ahead of time without playing it. urgent: needed in the next seconds."""
-        if not self.available():
+        if not self.available() or self._closed:
             return
         for text in texts:
             if can_voice(text):
@@ -263,6 +268,7 @@ class Speaker:
             await self._idle.wait()
 
     def close(self) -> None:
+        self._closed = True
         self.stop()
         self._urgent.shutdown(wait=False, cancel_futures=True)
         self._spare.shutdown(wait=False, cancel_futures=True)

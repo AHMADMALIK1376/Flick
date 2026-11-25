@@ -12,6 +12,7 @@ const LOOK: Record<AnswerOrigin, { label: string; bg: string; fg: string }> = {
   explain: { label: 'Explaining to the audience', bg: colors.explainBg, fg: colors.explainText },
   greeting: { label: 'Hello', bg: '#ece9f2', fg: '#4a4560' },
   error: { label: 'Problem', bg: '#fbe0e0', fg: '#9b2c2c' },
+  example: { label: 'Drawn example', bg: '#fdf1dc', fg: '#7a5212' },
 };
 
 export function OriginBadge({ origin }: { origin: AnswerOrigin }) {

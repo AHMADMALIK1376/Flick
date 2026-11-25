@@ -28,6 +28,7 @@ from .models import MODELS, Answer, Deck, DeckSummary, PredictedQuestion, Settin
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
 from .transcribe import TranscriberUnavailable
+from .lessons import STYLES
 from .voice import VOICES
 from .text import SlideTarget
 
@@ -53,6 +54,13 @@ class ExplainRequest(BaseModel):
 
 class PresentRequest(BaseModel):
     from_slide: Optional[int] = None  # None = from the first slide
+    style: str = "class"  # class | story | professional | exam
+
+
+class StudyRequest(BaseModel):
+    style: str = "story"
+    from_slide: Optional[int] = None
+    deck_id: Optional[str] = None  # None = the active presentation
 
 
 class PathRequest(BaseModel):
@@ -265,9 +273,21 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     @app.post("/present/start", dependencies=auth)
     async def present_start(req: PresentRequest) -> dict:
         try:
-            return service.start_presenting(req.from_slide)
+            return service.start_presenting(req.from_slide, req.style)
         except UserError as err:
             raise user_error(err)
+
+    @app.post("/study/start", dependencies=auth)
+    async def study_start(req: StudyRequest) -> dict:
+        """A student's study session: Flick explains the deck in the chosen style, on the Study page."""
+        try:
+            return service.start_study(req.style, req.from_slide, req.deck_id)
+        except UserError as err:
+            raise user_error(err)
+
+    @app.get("/styles", dependencies=auth)
+    async def styles() -> list[dict]:
+        return [{"id": k, "name": v} for k, v in STYLES.items()]
 
     @app.post("/present/pause", dependencies=auth)
     async def present_pause() -> dict:
@@ -419,6 +439,7 @@ ORIGIN_NAMES = {
     "general": "General knowledge",
     "explain": "Slide explanation",
     "error": "Problem",
+    "example": "Drawn example",
 }
 
 
