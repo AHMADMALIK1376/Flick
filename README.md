@@ -166,7 +166,7 @@ Disclosed as required by the competition rules.
 |---|---|
 | **Ahmad Malik** | Lead: AI, backend, desktop app |
 | **Muhammad Mehdi Kazmi** | Frontend and backend features |
-| **Abdullah** | Pitch, demo video, documentation |
+| **Syed Anas** | Pitch, demo video, documentation |
 
 BSCS students, Fall 2026.
 
