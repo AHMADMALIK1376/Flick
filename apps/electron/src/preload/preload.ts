@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('flick', {
   onToggleAsk: (callback: () => void) => on('flick:toggle-ask', () => callback()),
   /** Mic window: recording started / stopped (so the card can show "Listening…"). */
   setListening: (listening: boolean) => ipcRenderer.send('flick:listening', listening),
+  setMicMode: (mode: 'button' | 'panel') => ipcRenderer.send('flick:mic-mode', mode),
   /** Card window: recording started / stopped somewhere. */
   onListening: (callback: (listening: boolean) => void) => on('flick:listening', (v) => callback(Boolean(v))),
   /** Card window: show or hide the floating card. */

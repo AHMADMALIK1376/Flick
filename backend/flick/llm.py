@@ -88,9 +88,11 @@ class LLM(Protocol):
 class Claude:
     """Reads the key and model from settings on every call, so changes in Settings apply at once."""
 
-    def __init__(self, get_key: Callable[[], str], get_model: Callable[[], str]):
+    def __init__(self, get_key: Callable[[], str], get_model: Callable[[], str], meter=None):
         self._get_key = get_key
         self._get_model = get_model
+        #: usage.UsageMeter: counts the tokens of every call (Token Analyzer).
+        self.meter = meter
         self._client: Optional[anthropic.AsyncAnthropic] = None
         self._client_key: Optional[str] = None
 
@@ -119,17 +121,23 @@ class Claude:
         except anthropic.APIError as err:
             raise _map_error(err) from err
 
+    def _count(self, model: str, response) -> None:
+        if self.meter is not None:
+            self.meter.record(model, getattr(response, "usage", None))
+
     async def complete(self, system: str, message: Message, max_tokens: int = 700) -> str:
         client = self._client_for_key()
+        model = self._get_model()
         try:
             response = await client.messages.create(
-                model=self._get_model(),
+                model=model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": message}],
             )
         except anthropic.APIError as err:
             raise _map_error(err) from err
+        self._count(model, response)
         text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text").strip()
         if not text:
             raise LLMError("empty_response", "Claude returned an empty answer.")
@@ -139,9 +147,10 @@ class Claude:
         """Like `complete`, but hands each sentence to `on_text` as soon as it is written."""
         client = self._client_for_key()
         sentences = SentenceStream(on_text)
+        model = self._get_model()
         try:
             async with client.messages.stream(
-                model=self._get_model(),
+                model=model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": message}],
@@ -152,6 +161,7 @@ class Claude:
                 final = await stream.get_final_message()
         except anthropic.APIError as err:
             raise _map_error(err) from err
+        self._count(model, final)
         await sentences.flush()
         text = "".join(b.text for b in final.content if getattr(b, "type", "") == "text").strip()
         if not text:
@@ -176,10 +186,11 @@ class Claude:
         messages: list[dict] = [{"role": "user", "content": message}]
         content: list = []
         sentences = SentenceStream(on_text)
+        model = self._get_model()
         try:
             for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
                 async with client.messages.stream(
-                    model=self._get_model(),
+                    model=model,
                     max_tokens=max_tokens,
                     system=system,
                     messages=messages,
@@ -194,6 +205,7 @@ class Claude:
                         elif event.type == "content_block_stop":
                             await sentences.flush()
                     final = await stream.get_final_message()
+                self._count(model, final)
                 content.extend(final.content)
                 if final.stop_reason != "pause_turn":
                     break
@@ -210,15 +222,17 @@ class Claude:
         client = self._client_for_key()
         messages: list[dict] = [{"role": "user", "content": message}]
         content: list = []
+        model = self._get_model()
         try:
             for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
                 response = await client.messages.create(
-                    model=self._get_model(),
+                    model=model,
                     max_tokens=max_tokens,
                     system=system,
                     messages=messages,
                     tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
                 )
+                self._count(model, response)
                 content.extend(response.content)
                 if response.stop_reason != "pause_turn":
                     break

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional
 
 from .models import Deck
+from . import usage
 from .voice import split_sentences
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 State = Literal["idle", "starting", "presenting", "paused", "finished", "error"]
 
 #: If someone raised a hand but no question arrives, continue after this long.
-QUESTION_WAIT_S = 30.0
+QUESTION_WAIT_S = 75.0  # speak, read it back, edit, press ✓
 #: Breath between slides.
 SLIDE_GAP_S = 0.6
 #: After a slide was explained, how long to wait for a drawing that is still being planned.
@@ -65,6 +66,8 @@ class Presenter:
         self.message: Optional[str] = None
         #: Why PowerPoint is not following the talk (None when it is).
         self.powerpoint: Optional[str] = None
+        #: Token Analyzer card of this talk (every Claude call during it is counted there).
+        self.usage_card: Optional[str] = None
         self.paused_for: Optional[Literal["question", "manual"]] = None
         self.canvas_id: Optional[str] = None
         self._deck: Optional[Deck] = None
@@ -131,13 +134,19 @@ class Presenter:
         self._jump = None
         self._unpaused.set()
         self.state = "starting"
+        meter = self.service.usage
+        self.usage_card = meter.open_card(
+            "study" if study else "presentation", deck.name, deck_id=deck.id, deck_name=deck.name, style=style
+        )
         self._publish()
-        self._task = asyncio.ensure_future(self._run(deck, self.slide))
+        with usage.tagged(kind="talk", card=self.usage_card, deck_id=deck.id, style=style):
+            self._task = asyncio.ensure_future(self._run(deck, self.slide))
 
     def stop(self) -> None:
         if not self.active:
             return
         self._stopped = True
+        self.service.usage.close_card(self.usage_card)
         if self._task is not None and not self._task.done():
             self._task.cancel()  # a new talk must never run alongside the old one
         self._cancel_question_timer()
@@ -253,6 +262,7 @@ class Presenter:
                     await self._show_in_powerpoint(n)
                 self._close_canvas()
                 self.slide = n
+                usage.set_tag(slide=n)
                 self._publish()
 
                 # What to say now; the drawing (if any) is planned meanwhile.
@@ -282,6 +292,7 @@ class Presenter:
                 await self._say(STUDY_CLOSING if self.study else CLOSING)
                 self.state = "finished"
                 self.line = None
+                self.service.usage.close_card(self.usage_card)
                 self._publish()
         except Exception as err:  # never crash silently mid-talk
             self.state = "error"

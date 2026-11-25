@@ -5,6 +5,7 @@
 //   Separate Electron windows:   #/card  #/mic  #/presenter
 import { Center, Loader } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { UsagePage } from './pages/usage/UsagePage';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { api } from './api/flick';
 import { AppLayout } from './layout/AppLayout';
@@ -28,6 +29,7 @@ export function App() {
           <Route path="/study" element={<StudyPage />} />
           <Route path="/questions" element={<PreparedQuestionsPage />} />
           <Route path="/log" element={<QaLogPage />} />
+          <Route path="/usage" element={<UsagePage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
 

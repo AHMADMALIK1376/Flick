@@ -103,7 +103,7 @@ async def test_explanations_written_before_the_talk_are_used_instantly(db):
     a = await service.ask("Flick, explain this slide")
     assert (a.origin, a.answer, a.speak, a.streamed) == ("explain", "Slide three, ready before the talk.", True, False)
     assert len(llm.complete_calls) == calls_before  # no AI call
-    kinds = [events.get_nowait()["type"] for _ in range(events.qsize())]
+    kinds = [t for t in (events.get_nowait()["type"] for _ in range(events.qsize())) if t != "usage"]
     assert kinds == ["answer"]  # no "thinking": it's instant
 
 
@@ -157,8 +157,8 @@ async def test_live_answers_stream_and_announce_searching(db):
     service = make_service(db, llm)
     events = service.events.subscribe()
     a = await service.ask("Who invented gradient descent?")
-    seen = [events.get_nowait() for _ in range(events.qsize())]
-    kinds = [e["type"] for e in seen]
+    seen = [e for e in (events.get_nowait() for _ in range(events.qsize())) if e["type"] != "usage"]
+    kinds = [e["type"] for e in seen if e["type"] != "usage"]
     assert kinds == ["thinking", "searching", "answer_delta", "answer_delta", "answer"]
     assert seen[1]["data"]["speak"] is True  # nothing spoken yet → say "one moment"
     assert a.streamed and a.origin == "web"

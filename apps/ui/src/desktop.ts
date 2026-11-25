@@ -10,6 +10,8 @@ export interface FlickDesktop {
   hideCard(): void;
   showCanvas(): void;
   hideCanvas(): void;
+  /** Mic window: a small button, or the bigger question box (which can take typing). */
+  setMicMode?(mode: 'button' | 'panel'): void;
   /** Real path of a picked file (Electron); '' when unknown. */
   pathForFile?(file: File): string;
 }

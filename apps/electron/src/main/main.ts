@@ -19,7 +19,7 @@ import { Hotkeys } from './hotkeys';
 import { safeError, safeLog } from './logging';
 import { Backend, BackendInfo, launchPlan } from './sidecar';
 import { createTray } from './tray';
-import { canvasBounds, createCanvas, createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
+import { canvasBounds, micBounds, createCanvas, createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
 
 const SETTINGS_SYNC_MS = 3000;
 const DEV_UI_URL = 'http://127.0.0.1:5173';
@@ -146,6 +146,15 @@ ipcMain.on('flick:show-canvas', () => {
   }
 });
 ipcMain.on('flick:hide-canvas', () => canvas?.hide());
+ipcMain.on('flick:mic-mode', (_event, mode: unknown) => {
+  if (!mic || mic.isDestroyed()) return;
+  const panel = mode === 'panel';
+  mic.setBounds(micBounds(panel ? 'panel' : 'button'));
+  // The question box can be typed in; the button never takes focus from PowerPoint.
+  mic.setFocusable(panel);
+  mic.setAlwaysOnTop(true, 'screen-saver');
+  mic.moveTop();
+});
 ipcMain.on('flick:listening', (_event, listening: boolean) => {
   if (!card || card.isDestroyed()) return;
   card.webContents.send('flick:listening', listening);

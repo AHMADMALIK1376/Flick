@@ -1,6 +1,6 @@
 // Main window frame: sidebar on the left, the current page on the right.
 import { AppShell, Box, Group, NavLink, Stack, Text } from '@mantine/core';
-import { IconListDetails, IconMessages, IconPresentation, IconSchool, IconSettings } from '@tabler/icons-react';
+import { IconChartBar, IconListDetails, IconMessages, IconPresentation, IconSchool, IconSettings } from '@tabler/icons-react';
 import { NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { colors } from '../theme';
 import { Logo } from './Logo';
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/study', label: 'Study', icon: IconSchool },
   { to: '/questions', label: 'Prepared Questions', icon: IconListDetails },
   { to: '/log', label: 'Q&A Log', icon: IconMessages },
+  { to: '/usage', label: 'Token Analyzer', icon: IconChartBar },
   { to: '/settings', label: 'Settings', icon: IconSettings },
 ];
 

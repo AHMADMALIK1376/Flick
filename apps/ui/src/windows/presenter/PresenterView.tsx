@@ -11,10 +11,12 @@ import { OriginBadge } from '../../components/OriginBadge';
 import { useFlickEvent } from '../../hooks/useEvents';
 import { LogoMark } from '../../layout/Logo';
 import { colors } from '../../theme';
+import { AskPanel } from '../mic/AskPanel';
 import { useAskFlow } from '../mic/useAskFlow';
 
 export function PresenterView() {
-  const { phase, note, toggle } = useAskFlow();
+  const flow = useAskFlow();
+  const { phase, note, toggle } = flow;
   const [last, setLast] = useState<Answer | null>(null);
   const [working, setWorking] = useState<{ id: string; question: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
@@ -108,11 +110,14 @@ export function PresenterView() {
         </Text>
       )}
 
+      <AskPanel flow={flow} />
+
       <Group grow gap={10}>
         <Button
           size="md"
           onClick={toggle}
-          loading={phase === 'answering'}
+          disabled={phase === 'review'}
+          loading={phase === 'answering' || phase === 'writing'}
           leftSection={phase === 'listening' ? <IconPlayerStop size={18} /> : <IconMicrophone size={18} />}
           color={phase === 'listening' ? 'plum.7' : undefined}
           c={phase === 'listening' ? '#fff' : undefined}

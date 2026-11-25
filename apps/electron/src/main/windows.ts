@@ -77,10 +77,18 @@ export function createCard(ui: UiSource, backend: BackendInfo): BrowserWindow {
   return win;
 }
 
+/** Mic window sizes: the round button, and the question box (bottom-right corner both). */
+export const MIC_SIZES = { button: { width: 170, height: 80 }, panel: { width: 560, height: 200 } } as const;
+
+export function micBounds(mode: keyof typeof MIC_SIZES): Electron.Rectangle {
+  const { workArea } = screen.getPrimaryDisplay();
+  const { width, height } = MIC_SIZES[mode];
+  return { width, height, x: workArea.x + workArea.width - width - 24, y: workArea.y + workArea.height - height - 24 };
+}
+
 export function createMic(ui: UiSource, backend: BackendInfo): BrowserWindow {
   const { workArea } = screen.getPrimaryDisplay();
-  const width = 170;
-  const height = 80;
+  const { width, height } = MIC_SIZES.button;
   const win = new BrowserWindow(
     floating({ width, height, x: workArea.x + workArea.width - width - 24, y: workArea.y + workArea.height - height - 24 }),
   );
