@@ -48,6 +48,8 @@ async def answer_question(
     semantic: Optional[SemanticMatcher] = None,
     on_text: Optional[OnText] = None,
     on_search: Optional[OnSearch] = None,
+    language: str = "en",
+    female: bool = True,
 ) -> EngineAnswer:
     """
     Fastest source first:
@@ -57,7 +59,8 @@ async def answer_question(
          Claude searches only when the slides fall short. With `on_text`, the
          answer is streamed sentence by sentence so speech can start early.
     """
-    if deck and deck.predicted:
+    # Prepared answers are written in English: in an Urdu talk, answer live instead.
+    if deck and deck.predicted and language == "en":
         match = find_best_match(question, deck.predicted)
         if match:
             return EngineAnswer(match.item.answer, "prepared")
@@ -69,16 +72,17 @@ async def answer_question(
     message = prompts.live_message(question, deck, current_slide, recent)
     if on_text:
         result = await llm.stream_search(
-            prompts.LIVE_SYSTEM, message, ANSWER_MAX_TOKENS, MAX_SEARCHES, on_text, on_search or _noop
+            prompts.live_system(language, female), message, ANSWER_MAX_TOKENS, MAX_SEARCHES, on_text, on_search or _noop
         )
     else:
-        result = await llm.search_complete(prompts.LIVE_SYSTEM, message, ANSWER_MAX_TOKENS, MAX_SEARCHES)
+        result = await llm.search_complete(prompts.live_system(language, female), message, ANSWER_MAX_TOKENS, MAX_SEARCHES)
     origin = "web" if result.searched else ("slides" if deck else "general")
     return EngineAnswer(result.text, origin, result.sources[:SOURCES_SHOWN])
 
 
 async def explain_slide(
-    llm: LLM, deck: Deck, number: int, request: str, on_text: Optional[OnText] = None
+    llm: LLM, deck: Deck, number: int, request: str, on_text: Optional[OnText] = None,
+    language: str = "en", female: bool = True,
 ) -> str:
     """A ~1 minute explanation for the audience, from the slide and its neighbours. No web search."""
     by_number = {s.number: s for s in deck.slides}
@@ -86,9 +90,10 @@ async def explain_slide(
     if slide is None:
         raise LLMError("no_slide", f"This presentation has {len(deck.slides)} slides.")
     message = prompts.explain_message(deck.name, slide, by_number.get(number - 1), by_number.get(number + 1), request)
+    system = prompts.explain_system(language, female)
     if on_text:
-        return await llm.stream_complete(prompts.EXPLAIN_SYSTEM, message, EXPLAIN_MAX_TOKENS, on_text)
-    return await llm.complete(prompts.EXPLAIN_SYSTEM, message, EXPLAIN_MAX_TOKENS)
+        return await llm.stream_complete(system, message, EXPLAIN_MAX_TOKENS, on_text)
+    return await llm.complete(system, message, EXPLAIN_MAX_TOKENS)
 
 
 SLIDES_PER_EXPLAIN_BATCH = 4

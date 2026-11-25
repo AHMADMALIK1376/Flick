@@ -95,7 +95,13 @@ export interface Settings {
   voice: 'natural' | 'windows';
   voice_name: string;
   voice_speed: number;
+  /** The language Flick explains and answers in. 'mix' = Urdu + English, the way Pakistani teachers talk. */
+  talk_language: TalkLanguage;
+  /** The voice for Urdu and Urdu + English talks. */
+  urdu_voice: string;
 }
+
+export type TalkLanguage = 'en' | 'ur' | 'mix';
 
 /** Send only the fields you change. */
 export type SettingsUpdate = Partial<Omit<Settings, 'has_api_key'>>;

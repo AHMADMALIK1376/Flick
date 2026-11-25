@@ -4,7 +4,8 @@
 // Backend: GET /usage, DELETE /usage · Live events: usage
 import { Box, Button, Card, Center, Group, Loader, Modal, SegmentedControl, SimpleGrid, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconTrash } from '@tabler/icons-react';
+import { IconChartBar, IconTrash } from '@tabler/icons-react';
+import { IconTile } from '../../components/IconTile';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/flick';
 import type { UsageReport } from '../../api/types';
@@ -148,9 +149,9 @@ export function UsagePage() {
 
           {cards.length === 0 ? (
             <Card p={30}>
-              <Text ta="center" fz={30} aria-hidden>
-                📊
-              </Text>
+              <Box style={{ display: 'flex', justifyContent: 'center' }}>
+                <IconTile icon={IconChartBar} size={48} />
+              </Box>
               <Text ta="center" fw={700} c={colors.ink} mt={6}>
                 Nothing counted yet
               </Text>

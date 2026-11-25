@@ -92,6 +92,7 @@ export const api = {
 
   // ── Voice ──
   voices: () => request<ModelOption[]>('GET', '/voices'),
+  urduVoices: () => request<ModelOption[]>('GET', '/urdu-voices'),
   voiceTest: () => request<void>('POST', '/voice/test'),
   /** The Stop button: Flick goes quiet at once (a talk in progress is paused). */
   voiceStop: () => request<void>('POST', '/voice/stop'),

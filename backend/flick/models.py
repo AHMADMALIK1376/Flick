@@ -109,6 +109,10 @@ class Settings(BaseModel):
     voice: Literal["natural", "windows"] = "natural"
     voice_name: str = "af_heart"
     voice_speed: float = Field(default=1.0, ge=0.7, le=1.4)
+    # The language Flick explains and answers in: English, Urdu, or Urdu + English mixed
+    # (the way Pakistani teachers talk in class).
+    talk_language: Literal["en", "ur", "mix"] = "en"
+    urdu_voice: str = "hf_alpha"
 
 
 class SettingsUpdate(BaseModel):
@@ -126,6 +130,8 @@ class SettingsUpdate(BaseModel):
     voice: Optional[Literal["natural", "windows"]] = None
     voice_name: Optional[str] = None
     voice_speed: Optional[float] = Field(default=None, ge=0.7, le=1.4)
+    talk_language: Optional[Literal["en", "ur", "mix"]] = None
+    urdu_voice: Optional[str] = None
 
 
 # Models offered in the sidebar and in Settings. Haiku first: live answers are latency-bound.

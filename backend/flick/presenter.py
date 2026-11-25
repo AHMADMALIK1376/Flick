@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional
 
 from .models import Deck
-from . import usage
+from . import lessons, usage
 from .voice import split_sentences
 
 if TYPE_CHECKING:
@@ -66,13 +66,74 @@ DRAW_INTROS_DEFAULT = [
     "Okay, let me draw this out.",
 ]
 DRAW_INTRO_DEFAULT = DRAW_INTROS_DEFAULT[0]
+
+# The same lines in Urdu, and in Urdu + English the way Pakistani teachers mix them. Written with
+# "we" forms (چلیں، دیکھتے ہیں) so they fit both a woman's and a man's voice.
+LINES: dict[str, dict[str, object]] = {
+    "ur": {
+        "greeting": "السلام علیکم سب کو! آپ سب کا بہت شکریہ کہ آپ یہاں ہیں۔",
+        "study_greeting": "السلام علیکم! چلیں، یہ سب مل کر آرام سے، ایک ایک قدم سمجھتے ہیں۔",
+        "continue": [
+            "اچھا، تو وہیں سے شروع کرتے ہیں جہاں رکے تھے۔",
+            "ٹھیک ہے، واپس آتے ہیں اپنی بات پر۔",
+            "چلیں، آگے چلتے ہیں۔",
+            "ہاں تو، ہم کہاں تھے؟ چلیں، آگے بڑھتے ہیں۔",
+        ],
+        "closing": "تو آج کے لیے بس اتنا ہی۔ سننے کا بہت بہت شکریہ! کوئی سوال ہو تو ضرور پوچھیں۔",
+        "study_closing": "اور یہ تھا پورا سبق۔ بہت خوب، آپ نے آخر تک ساتھ دیا! کچھ دوبارہ سمجھنا ہو تو ضرور بتائیں۔",
+        "draw": ["چلیں، اسے بورڈ پر بنا کر دیکھتے ہیں۔", "یہ تصویر سے زیادہ آسانی سے سمجھ آئے گا، دیکھیں۔", "ایک منٹ، اسے بورڈ پر سمجھتے ہیں۔"],
+        "draw_story": ["چلیں، کہانی کا یہ حصہ بورڈ پر دیکھتے ہیں۔", "ذرا تصور کریں، اسے بنا کر دیکھتے ہیں۔"],
+        "asked_draw": "چلیں، اسے بورڈ پر بنا کر دیکھتے ہیں۔",
+        "asked_example": "چلیں، روزمرہ زندگی کی ایک مثال بورڈ پر بنا کر دیکھتے ہیں۔",
+        "again_same": "جی ضرور، اسے ایک اور طریقے سے دوبارہ سمجھتے ہیں۔",
+        "again_back": "جی ضرور۔ چلیں، واپس سلائیڈ {n} پر چلتے ہیں۔",
+        "again_ahead": "جی ضرور۔ چلیں، سلائیڈ {n} دیکھتے ہیں۔",
+        "return": "ٹھیک ہے! اب واپس سلائیڈ {n} پر، جہاں ہم تھے۔",
+    },
+    "mix": {
+        "greeting": "Hello everyone! آپ سب کا بہت شکریہ کہ آپ یہاں ہیں۔",
+        "study_greeting": "Hey! چلیں، یہ topic مل کر step by step سمجھتے ہیں۔",
+        "continue": [
+            "Okay، تو وہیں سے continue کرتے ہیں جہاں رکے تھے۔",
+            "Alright، واپس اپنے topic پر آتے ہیں۔",
+            "Good، آگے چلتے ہیں۔",
+            "ہاں تو، ہم کہاں تھے؟ چلیں continue کرتے ہیں۔",
+        ],
+        "closing": "تو آج کے لیے بس اتنا ہی۔ Thank you so much سننے کے لیے! کوئی بھی question ہو تو ضرور پوچھیں۔",
+        "study_closing": "اور یہ تھا پورا topic۔ Well done، آپ نے end تک ساتھ دیا! کچھ بھی دوبارہ سمجھنا ہو تو بتائیں۔",
+        "draw": ["چلیں، اسے board پر draw کر کے دیکھتے ہیں۔", "یہ picture سے زیادہ easily سمجھ آئے گا، دیکھیں۔", "ایک minute، اسے quickly sketch کرتے ہیں۔"],
+        "draw_story": ["چلیں، story کا یہ part board پر دیکھتے ہیں۔", "Imagine کریں، اسے sketch کرتے ہیں۔"],
+        "asked_draw": "چلیں، اسے board پر draw کرتے ہیں۔",
+        "asked_example": "چلیں، ایک real-life example board پر بنا کر دیکھتے ہیں۔",
+        "again_same": "Sure، اسے ایک different way سے دوبارہ سمجھتے ہیں۔",
+        "again_back": "Sure! چلیں واپس slide {n} پر چلتے ہیں۔",
+        "again_ahead": "Sure! چلیں slide {n} دیکھتے ہیں۔",
+        "return": "Okay! اب واپس slide {n} پر، جہاں ہم تھے۔",
+    },
+}
+_ENGLISH = {
+    "greeting": GREETING,
+    "study_greeting": STUDY_GREETING,
+    "continue": CONTINUES,
+    "closing": CLOSING,
+    "study_closing": STUDY_CLOSING,
+    "draw": DRAW_INTROS_DEFAULT,
+    "draw_story": DRAW_INTROS["story"],
+    "draw_exam": DRAW_INTROS["exam"],
+    "asked_draw": "Let me draw it for you.",
+    "asked_example": "Let me draw a real-life example.",
+    "again_same": "Sure, let me go over that again, a different way.",
+    "again_back": "Sure. Let's go back to slide {n}.",
+    "again_ahead": "Sure. Let's look at slide {n}.",
+    "return": "Okay! Now, back to slide {n}, where we were.",
+}
 #: A new explanation for "explain slide 6 again": worth a short wait (the intro covers most of it).
 FRESH_WAIT_S = 15.0
 #: A drawing someone asked for ("go back to slide 6 and draw it"): worth waiting longer for.
 ASKED_DRAWING_WAIT_S = 30.0
 ASKED_DRAW_INTRO = {"example": "Let me draw a real-life example.", "draw": "Let me draw it for you."}
 #: The first slide's text may already greet the room: then Flick doesn't greet twice.
-_GREETS = re.compile(r"^(hello|hi\b|hey\b|good (morning|afternoon|evening)|welcome|assalam|salam)")
+_GREETS = re.compile(r"^(hello|hi\b|hey\b|good (morning|afternoon|evening)|welcome|assalam|salam|السلام|اسلام|آداب|خوش آمدید)")
 
 
 @dataclass
@@ -117,7 +178,8 @@ class Presenter:
         self._stopped = False
         self._jump: Optional[int] = None
         self._detour: Optional[_Detour] = None
-        self._said_count: dict[str, int] = {}  # rotating lines: how often each kind was said this talk
+        self._said_count: dict[str, int] = {}
+        self.language = "en"  # the talk's language (set when it starts)  # rotating lines: how often each kind was said this talk
         self._question_timer: Optional[asyncio.TimerHandle] = None
         self._just_resumed = False
 
@@ -157,8 +219,8 @@ class Presenter:
 
     @property
     def plan_key(self) -> str:
-        """What Flick says is written for the audience: a class (teacher) or one student (a friend)."""
-        return self.style + ("@study" if self.study else "")
+        """What Flick says is written for the audience (a class or one student) and in the talk's language."""
+        return lessons.plan_key(self.style, self.study, self.language)
 
     def _publish(self) -> None:
         self.service.events.publish("present", self.status())
@@ -181,11 +243,13 @@ class Presenter:
         self._jump = None
         self._detour = None
         self._said_count = {}
+        self.language = self.service.talk_language()[0]  # fixed for the whole talk
         self._unpaused.set()
         self.state = "starting"
         meter = self.service.usage
         self.usage_card = meter.open_card(
-            "study" if study else "presentation", deck.name, deck_id=deck.id, deck_name=deck.name, style=style
+            "study" if study else "presentation", deck.name, deck_id=deck.id, deck_name=deck.name,
+            style=style + (f"#{self.language}" if self.language != "en" else ""),
         )
         self._publish()
         with usage.tagged(kind="talk", card=self.usage_card, deck_id=deck.id, style=style):
@@ -294,7 +358,7 @@ class Presenter:
         await self._unpaused.wait()
         if self._just_resumed and not self._stopped and self._jump is None:
             self._just_resumed = False
-            await self._say(self._rotate("continue", CONTINUES))
+            await self._say(self._line("continue"))
         self._just_resumed = False
 
     async def _speak(self, segments: list[_Segment]) -> None:
@@ -312,6 +376,12 @@ class Presenter:
             if not segment.text or await self._say(segment.text):
                 i += 1
 
+    def _line(self, kind: str, **values) -> str:
+        """One of Flick's own lines, in the talk's language. Lists rotate; {n} is filled in."""
+        lines = LINES.get(self.language, {}).get(kind) or _ENGLISH.get(kind) or ""
+        line = self._rotate(kind, lines) if isinstance(lines, list) else str(lines)
+        return line.format(**values) if values else line
+
     def _rotate(self, kind: str, lines: list[str]) -> str:
         """The next line of this kind: first time the first one, then the others in turn."""
         n = self._said_count.get(kind, 0)
@@ -321,9 +391,9 @@ class Presenter:
     def _drawing_segments(self, drawing: dict, slide: int, intro: bool = True) -> list[_Segment]:
         canvas_id = str(uuid.uuid4())
         opened = {"action": "open", "id": canvas_id, "slide": slide, "target": self.target, **drawing}
-        base = self.style.split("@")[0].partition("+")[0]
-        intros = DRAW_INTROS.get(base, DRAW_INTROS_DEFAULT)
-        segments = [_Segment(self._rotate(f"draw:{base}", intros) if intro else "", opened)]
+        base = lessons.base_style(self.style)
+        kind = f"draw_{base}" if f"draw_{base}" in _ENGLISH else "draw"
+        segments = [_Segment(self._line(kind) if intro else "", opened)]
         for number, step in enumerate(drawing["steps"], start=1):
             event = {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": self.target}
             for k, sentence in enumerate(split_sentences(step["say"])):
@@ -353,13 +423,13 @@ class Presenter:
                     # Explained again: in new words (written while Flick says "Sure, let's go back...").
                     fresh = service.fresh_explanation(deck, n, self.plan_key, detour.request)
                     if detour.board != "auto":  # start drawing now, while the slide is explained
-                        asked = service.requested_drawing(deck, n, self.style, detour.board, detour.request)
+                        asked = service.requested_drawing(deck, n, self.plan_key, detour.board, detour.request)
                     if detour.back == n:
-                        intro = "Sure, let me go over that again, a different way."
+                        intro = self._line("again_same")
                     elif detour.back and detour.back > n:
-                        intro = f"Sure. Let's go back to slide {n}."
+                        intro = self._line("again_back", n=n)
                     else:
-                        intro = f"Sure. Let's look at slide {n}."
+                        intro = self._line("again_ahead", n=n)
                     await self._speak([_Segment(intro)])
                     if self._stopped or self._jump is not None:
                         if self._stopped:
@@ -376,14 +446,14 @@ class Presenter:
                 service.prefetch_slide_plan(deck, n + 1, self.plan_key)
                 sentences = split_sentences(text)
                 if first and n == 1 and not _GREETS.match(text.strip().lower()):
-                    sentences.insert(0, STUDY_GREETING if self.study else GREETING)
+                    sentences.insert(0, self._line("study_greeting" if self.study else "greeting"))
                 first = False
                 service.speaker.prefetch(sentences, urgent=True)  # type: ignore[union-attr]
 
                 await self._speak([_Segment(s) for s in sentences])
                 if not self._stopped and self._jump is None:
                     if detour and detour.board != "auto":
-                        await self._speak([_Segment(ASKED_DRAW_INTRO[detour.board])])
+                        await self._speak([_Segment(self._line(f"asked_{detour.board}"))])
                         drawing = await _result(drawing_job, ASKED_DRAWING_WAIT_S)
                         if drawing:
                             await self._speak(self._drawing_segments(drawing, n, intro=False))
@@ -401,7 +471,7 @@ class Presenter:
                     self._detour = None
                     if detour.back and detour.back != n:
                         self._close_canvas()
-                        await self._speak([_Segment(f"Okay! Now, back to slide {detour.back}, where we were.")])
+                        await self._speak([_Segment(self._line("return", n=detour.back))])
                         if self._stopped:
                             return
                         if self._jump is not None:
@@ -414,7 +484,7 @@ class Presenter:
                     await asyncio.sleep(SLIDE_GAP_S)
             if not self._stopped:
                 await self._wait_if_paused()
-                await self._say(STUDY_CLOSING if self.study else CLOSING)
+                await self._say(self._line("study_closing" if self.study else "closing"))
                 self.state = "finished"
                 self.line = None
                 self.service.usage.close_card(self.usage_card)

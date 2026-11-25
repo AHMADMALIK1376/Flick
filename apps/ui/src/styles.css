@@ -36,3 +36,13 @@ body.window-transparent .mantine-AppShell-main {
   0%, 100% { transform: scaleY(0.35); }
   50% { transform: scaleY(1); }
 }
+
+/* Urdu (right to left) and English (left to right) in the same app: every paragraph takes
+   the direction of its own text, so an Urdu answer reads right to left and lines up on the right. */
+.mantine-Text-root,
+.mantine-Textarea-input,
+.mantine-TextInput-input,
+p {
+  unicode-bidi: plaintext;
+  text-align: start;
+}

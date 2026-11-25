@@ -20,7 +20,7 @@ import re
 from typing import Any, Literal, Optional
 
 from .models import Deck, Slide
-from .prompts import AUDIENCE_CLASS, AUDIENCE_STUDY, TEACHER_VOICE, format_slide
+from .prompts import AUDIENCE_CLASS, AUDIENCE_STUDY, TEACHER_VOICE, format_slide, with_language
 
 Style = Literal["class", "story", "professional", "exam", "visual"]
 STYLES: dict[str, str] = {
@@ -159,7 +159,7 @@ obvious (a chai dhaba, a cricket team, a bank queue, a WhatsApp group, a univers
 
 def split_style(style: str) -> tuple[str, str]:
     """ "story+example" → ("story", "example"); "exam" → ("exam", "auto"). Visual mode always draws examples."""
-    base, _, board = (style or "class").split("@")[0].partition("+")
+    base, _, board = re.split(r"[@#]", style or "class")[0].partition("+")
     base = base if base in STYLES else "class"
     if base == "visual":
         return base, "example"
@@ -168,7 +168,17 @@ def split_style(style: str) -> tuple[str, str]:
 
 def is_study(plan_key: str) -> bool:
     """Plans for a study session (one student) are written and saved apart from class talks: "story+draw@study"."""
-    return (plan_key or "").endswith("@study")
+    return "@study" in (plan_key or "")
+
+
+def language_of(plan_key: str) -> str:
+    """ "story@study#ur" → "ur". Each language's slide text is written and saved on its own."""
+    _, _, lang = (plan_key or "").partition("#")
+    return lang if lang in ("ur", "mix") else "en"
+
+
+def plan_key(style: str, study: bool, language: str) -> str:
+    return style + ("@study" if study else "") + (f"#{language}" if language in ("ur", "mix") else "")
 
 
 def base_style(style: str) -> str:
@@ -201,21 +211,35 @@ The "Draw ONLY when..." rule below does not apply here: every content slide gets
 In visual mode "text" is only the short lead-in (25-45 words); in other styles keep the style's length."""
 
 
-def lesson_system(style: str, study: bool = True) -> str:
+def lesson_system(style: str, study: bool = True, language: str = "en", female: bool = True) -> str:
     """study: one student on the Study page (a friend explaining); else the whole class (a teacher)."""
     when = _LESSON_DRAW_VISUAL if always_draws(style) else _LESSON_DRAW_WHEN
-    return LESSON_SYSTEM.format(
+    system = LESSON_SYSTEM.format(
         voice=TEACHER_VOICE,
         audience=AUDIENCE_STUDY if study else AUDIENCE_CLASS,
         style_guide=style_guide(style),
         draw_rules=DRAW_RULES,
         draw_when=when,
     )
+    if language != "en":
+        system = system.replace("Spoken English that Pakistani\n  students find natural (a Roman Urdu word is fine if the deck uses them).", "In the language below.")
+        system = with_language(system, language, female) + DRAW_LABELS_NOTE
+    return system
 
 
-def draw_system(style: str, asked: bool) -> str:
+def draw_system(style: str, asked: bool, language: str = "en", female: bool = True) -> str:
     when = _WHEN_ASKED if asked else _WHEN_VISUAL if always_draws(style) else _WHEN_AUTO
-    return DRAW_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, when=when)
+    system = DRAW_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, when=when)
+    if language != "en":
+        system = with_language(system, language, female) + DRAW_LABELS_NOTE
+    return system
+
+
+#: Board labels stay short English words (the board's handwriting font is English); what Flick SAYS
+#: while drawing ("say") is in the talk's language.
+DRAW_LABELS_NOTE = """
+For a drawing: write every "say" in the language above, but keep labels and text on the board in short
+English words (the board's handwriting is English)."""
 
 
 def lesson_message(deck: Deck, number: int, previous_text: Optional[str]) -> str:

@@ -1,28 +1,27 @@
 // One Token Analyzer card: a whole presentation, a study session, one slide, questions, or
 // preparation. Click it and it opens up in place (no pop-up) to show where the tokens went.
 import { Badge, Box, Collapse, Group, SimpleGrid, Table, Text, UnstyledButton } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons-react';
+import {
+  IconChevronDown,
+  IconMessageQuestion,
+  IconPresentation,
+  IconSchool,
+  IconSettings,
+  IconSlideshow,
+  type Icon,
+} from '@tabler/icons-react';
+import { IconTile } from '../../components/IconTile';
 import type { UsageCard, UsageSums } from '../../api/types';
 import { styleLabel } from '../../components/BoardPicker';
 import { colors } from '../../theme';
 import { duration, tokens, usd, when } from './format';
 
-const TYPE_LOOK: Record<string, { emoji: string; color: string }> = {
-  presentation: { emoji: '🎤', color: 'plum' },
-  study: { emoji: '📚', color: 'aqua' },
-  slide: { emoji: '🖼️', color: 'grape' },
-  questions: { emoji: '🙋', color: 'orange' },
-  prep: { emoji: '⚙️', color: 'gray' },
-};
-
-const KIND_EMOJI: Record<string, string> = {
-  talk: '🗣️',
-  drawing: '✏️',
-  example: '💡',
-  question: '🙋',
-  explain: '🖼️',
-  prep: '⚙️',
-  other: '•',
+const TYPE_LOOK: Record<string, { icon: Icon; color: string }> = {
+  presentation: { icon: IconPresentation, color: 'plum' },
+  study: { icon: IconSchool, color: 'aqua' },
+  slide: { icon: IconSlideshow, color: 'grape' },
+  questions: { icon: IconMessageQuestion, color: 'orange' },
+  prep: { icon: IconSettings, color: 'gray' },
 };
 
 export const STYLE_NAMES: Record<string, string> = {
@@ -91,9 +90,7 @@ export function UsageCardView({ card, open, onToggle }: { card: UsageCard; open:
     >
       <UnstyledButton onClick={onToggle} aria-expanded={open} w="100%" p={16}>
         <Group gap={14} wrap="nowrap" align="center">
-          <Text fz={26} aria-hidden>
-            {look.emoji}
-          </Text>
+          <IconTile icon={look.icon} size={42} />
           <Box style={{ flex: 1, minWidth: 0 }}>
             <Group gap={8} wrap="wrap">
               <Text fw={800} fz={15.5} c={colors.ink} truncate maw={420}>
@@ -163,7 +160,7 @@ export function UsageCardView({ card, open, onToggle }: { card: UsageCard; open:
           ) : (
             <Box style={{ display: 'grid', gap: 12 }}>
               {card.by_kind.map((k) => (
-                <PartBar key={k.kind} label={`${KIND_EMOJI[k.kind] ?? '•'} ${k.name}`} part={k} of={t.cost} />
+                <PartBar key={k.kind} label={k.name} part={k} of={t.cost} />
               ))}
             </Box>
           )}

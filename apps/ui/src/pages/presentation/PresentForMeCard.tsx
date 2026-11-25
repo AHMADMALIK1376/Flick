@@ -1,10 +1,11 @@
 // "Present for me": Flick gives the whole talk, slide by slide, in its own voice.
 // Idle: a big start button. While presenting: live slide, caption and controls.
 import { Badge, Box, Button, Card, Group, NumberInput, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
-import { IconPlayerPlay, IconSpeakerphone } from '@tabler/icons-react';
+import { IconAlertTriangle, IconPlayerPlay, IconSpeakerphone } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { Board, Deck, Status } from '../../api/types';
 import { BoardPicker } from '../../components/BoardPicker';
+import { LanguagePicker } from '../../components/LanguagePicker';
 import { PresentControls, presentLabel } from '../../components/PresentControls';
 import type { Presenter } from '../../hooks/usePresenter';
 import { colors } from '../../theme';
@@ -85,9 +86,12 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
         </Text>
       )}
       {status.powerpoint && !status.study && status.state !== 'idle' && status.state !== 'finished' && (
-        <Text fz={13} c="#ffe7a8" fw={600} mt={10} role="status">
-          ⚠️ {status.powerpoint}
-        </Text>
+        <Group gap={6} mt={10} wrap="nowrap" align="flex-start" role="status">
+          <IconAlertTriangle size={16} color="#ffe7a8" style={{ flexShrink: 0, marginTop: 2 }} />
+          <Text fz={13} c="#ffe7a8" fw={600}>
+            {status.powerpoint}
+          </Text>
+        </Group>
       )}
       {status.state === 'error' && status.message && (
         <Text fz={13} c="#ffd5cf" fw={600} mt={10}>
@@ -101,15 +105,16 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
         radius="md"
         data={[
           { value: 'class', label: 'Standard' },
-          { value: 'story', label: '📖 Story' },
-          { value: 'professional', label: '💼 Professional' },
-          { value: 'exam', label: '🎯 Exam' },
-          { value: 'visual', label: '✏️ Visual' },
+          { value: 'story', label: 'Story' },
+          { value: 'professional', label: 'Professional' },
+          { value: 'exam', label: 'Exam' },
+          { value: 'visual', label: 'Visual' },
         ]}
         styles={{ root: { background: 'rgba(255,255,255,0.14)' }, label: { color: '#fff' }, indicator: { background: 'rgba(255,255,255,0.28)' } }}
         aria-label="How Flick explains"
       />
       <BoardPicker value={board} onChange={setBoard} style={style} dark />
+      <LanguagePicker dark />
       <Group gap={10} mt={14} align="flex-end">
         <Button
           size="lg"

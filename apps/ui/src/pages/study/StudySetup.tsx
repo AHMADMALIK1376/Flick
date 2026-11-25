@@ -4,11 +4,13 @@ import { IconPlayerPlay, IconUpload } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { Board, DeckSummary, Status } from '../../api/types';
 import { BoardPicker } from '../../components/BoardPicker';
+import { LanguagePicker } from '../../components/LanguagePicker';
 import type { Presenter } from '../../hooks/usePresenter';
 import { colors } from '../../theme';
 import { pickFile } from '../presentation/EmptyState';
 import { useDeckLoader } from '../presentation/useDeckLoader';
 import { STUDY_MODES } from './modes';
+import { IconTile } from '../../components/IconTile';
 
 interface Props {
   decks: DeckSummary[];
@@ -103,9 +105,7 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
                     height: '100%',
                   }}
                 >
-                  <Text fz={34} lh={1}>
-                    {m.emoji}
-                  </Text>
+                  <IconTile icon={m.icon} size={44} tint={checked ? colors.surface : colors.soft} />
                   <Text fz={16} fw={800} c={colors.ink} mt={10}>
                     {m.name}
                   </Text>
@@ -121,6 +121,7 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
           </SimpleGrid>
         </Radio.Group>
         <BoardPicker value={board} onChange={setBoard} style={mode} />
+        <LanguagePicker />
         <Text fz={12.5} c={colors.muted} mt={10}>
           You can stop Flick any time to ask a question, or say “go back to slide 3 and draw it”.
         </Text>

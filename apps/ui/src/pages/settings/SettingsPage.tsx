@@ -2,23 +2,7 @@
 //
 // Form for all settings. Sends only changed fields. Never shows the full API key.
 // Backend: GET/PATCH /settings, GET /models, POST /settings/test-key
-import {
-  Box,
-  Button,
-  Card,
-  Center,
-  Checkbox,
-  Group,
-  Loader,
-  PasswordInput,
-  Radio,
-  Select,
-  SimpleGrid,
-  Slider,
-  Stack,
-  Text,
-  TextInput,
-} from '@mantine/core';
+import { Box, Button, Card, Center, Checkbox, Group, Loader, PasswordInput, Radio, SegmentedControl, Select, SimpleGrid, Slider, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconCheck, IconPlugConnected, IconVolume } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -28,6 +12,7 @@ import type { ModelOption, Settings, SettingsUpdate } from '../../api/types';
 import { PageHeader } from '../../components/PageHeader';
 import { colors } from '../../theme';
 import { ChoiceCard } from './ChoiceCard';
+import { LANGUAGE_EVENT, LANGUAGES } from '../../components/LanguagePicker';
 import { HotkeyInput } from './HotkeyInput';
 
 type Form = Omit<Settings, 'anthropic_api_key' | 'has_api_key'>;
@@ -53,6 +38,7 @@ export function SettingsPage() {
   const [saved, setSaved] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [voices, setVoices] = useState<ModelOption[]>([]);
+  const [urduVoices, setUrduVoices] = useState<ModelOption[]>([]);
   const [testingVoice, setTestingVoice] = useState(false);
   const [form, setForm] = useState<Form | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null); // null = keep the saved key
@@ -63,6 +49,10 @@ export function SettingsPage() {
     api
       .voices()
       .then(setVoices)
+      .catch(() => undefined);
+    api
+      .urduVoices()
+      .then(setUrduVoices)
       .catch(() => undefined);
     Promise.all([api.getSettings(), api.models()])
       .then(([s, m]) => {
@@ -114,6 +104,9 @@ export function SettingsPage() {
     try {
       const updated = await api.updateSettings(changes);
       if (saved && updated.model !== saved.model) announceModel(updated.model);
+      if (saved && updated.talk_language !== saved.talk_language) {
+        window.dispatchEvent(new CustomEvent(LANGUAGE_EVENT, { detail: updated.talk_language }));
+      }
       setSaved(updated);
       setForm(toForm(updated));
       setNewKey(updated.has_api_key ? null : '');
@@ -126,7 +119,13 @@ export function SettingsPage() {
     }
   }
 
-  const voiceChanged = !!saved && !!form && (form.voice_name !== saved.voice_name || form.voice_speed !== saved.voice_speed);
+  const voiceChanged =
+    !!saved &&
+    !!form &&
+    (form.voice_name !== saved.voice_name ||
+      form.voice_speed !== saved.voice_speed ||
+      form.urdu_voice !== saved.urdu_voice ||
+      form.talk_language !== saved.talk_language);
 
   async function hearVoice() {
     setTestingVoice(true);
@@ -241,18 +240,43 @@ export function SettingsPage() {
               value="windows"
               checked={form.voice === 'windows'}
               title="Windows voice"
-              text="The built-in Windows voice. Use it for Urdu, or on a slow computer."
+              text="The built-in Windows voice. Use it on a slow computer."
             />
           </Group>
         </Radio.Group>
+        <Box mt={18}>
+          <Text fz={14} fw={500} c={colors.ink} mb={6}>
+            Language Flick talks in
+          </Text>
+          <SegmentedControl
+            value={form.talk_language}
+            onChange={(v) => set('talk_language', v as Form['talk_language'])}
+            data={LANGUAGES.map(({ value, label }) => ({ value, label }))}
+            aria-label="Language Flick talks in"
+          />
+          <Text fz={12.5} c={colors.muted} mt={6}>
+            {LANGUAGES.find((l) => l.value === form.talk_language)?.hint} You can also change it on the Presentation and
+            Study pages.
+          </Text>
+        </Box>
         {form.voice === 'natural' && (
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing={18} mt={18}>
             <Select
               size="md"
               label="Voice"
+              description="For English"
               data={voices.map((v) => ({ value: v.id, label: v.name }))}
               value={form.voice_name}
               onChange={(v) => v && set('voice_name', v)}
+              allowDeselect={false}
+            />
+            <Select
+              size="md"
+              label="Urdu voice"
+              description="For Urdu and Urdu + English"
+              data={urduVoices.map((v) => ({ value: v.id, label: v.name }))}
+              value={form.urdu_voice}
+              onChange={(v) => v && set('urdu_voice', v)}
               allowDeselect={false}
             />
             <Stack gap={6}>

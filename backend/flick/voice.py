@@ -38,20 +38,51 @@ VOICES = [
 ]
 DEFAULT_VOICE = "af_heart"
 
-# Kokoro speaks English here. Text in another script (Urdu) is left to the Windows voice.
-_LATIN_ONLY = re.compile(r"^[\x00-\x7F -ɏ‐-›€]*$")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+#: Voices for Urdu and for Urdu + English (Kokoro's Hindi voices: spoken Urdu and Hindi sound the
+#: same; the words are read with Urdu pronunciation rules, English words with English ones).
+URDU_VOICES = [
+    ("hf_alpha", "Alpha (female)"),
+    ("hf_beta", "Beta (female)"),
+    ("hm_omega", "Omega (male)"),
+    ("hm_psi", "Psi (male)"),
+]
+DEFAULT_URDU_VOICE = "hf_alpha"
+
+_URDU = r"؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿"
+# Kokoro says English (Latin letters) and Urdu (Urdu script, with English words mixed in).
+_SPEAKABLE = re.compile(r"^[\x00-\x7F -ɏ‐-›€" + _URDU + r"]*$")
+_URDU_LETTER = re.compile("[" + _URDU + "]")
+_SENTENCE_END = re.compile(
+    r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])"  # English: ". The"
+    r"|(?<=[.!?۔؟])\s+(?=[" + _URDU + r"])"  # Urdu: "۔ آج" / "? آپ"
+    r"|(?<=[۔؟])\s+"  # after an Urdu full stop or question mark, whatever comes next
+)
+#: espeak marks words it read in another language: "(en)bˈeɪsɪkli(ur)". Kokoro must not see the marks.
+_LANG_FLAG = re.compile(r"\([a-z]{2}(?:-[a-z]{2,3})?\)")
+
+
+def has_urdu(text: str) -> bool:
+    return bool(_URDU_LETTER.search(text))
 
 
 def can_voice(text: str) -> bool:
-    """True when Kokoro can say this (English / Roman Urdu, not Urdu script)."""
-    return bool(text.strip()) and bool(_LATIN_ONLY.match(text))
+    """True when Kokoro can say this: English, Roman Urdu, or Urdu script (with English words in it)."""
+    return bool(text.strip()) and bool(_SPEAKABLE.match(text))
 
 
 def split_sentences(text: str) -> list[str]:
     """Splits a paragraph into sentences to speak one at a time."""
     parts = [p.strip() for p in _SENTENCE_END.split(text.strip())]
     return [p for p in parts if p]
+
+
+def is_urdu_voice(voice: str) -> bool:
+    return voice.startswith("h")
+
+
+def urdu_voice_like(voice: str) -> str:
+    """The Urdu voice closest to an English one (female → female)."""
+    return "hm_omega" if len(voice) > 1 and voice[1] == "m" else DEFAULT_URDU_VOICE
 
 
 def _lang_for(voice: str) -> str:
@@ -110,8 +141,22 @@ class KokoroVoice:
     def synthesize(self, text: str, voice: str, speed: float) -> tuple[np.ndarray, int]:
         if self._kokoro is None:
             raise RuntimeError("voice not loaded")
-        samples, rate = self._kokoro.create(text, voice=voice, speed=speed, lang=_lang_for(voice))
+        if has_urdu(text) and not is_urdu_voice(voice):
+            voice = urdu_voice_like(voice)  # Urdu in an English talk (e.g. a question asked in Urdu)
+        if is_urdu_voice(voice):
+            phonemes = urdu_phonemes(self._kokoro, text)
+            samples, rate = self._kokoro.create(phonemes, voice=voice, speed=speed, is_phonemes=True)
+        else:
+            samples, rate = self._kokoro.create(text, voice=voice, speed=speed, lang=_lang_for(voice))
         return np.asarray(samples, dtype=np.float32), int(rate)
+
+
+def urdu_phonemes(kokoro, text: str) -> str:
+    """Urdu script (with English words in English letters) → the sounds Kokoro speaks.
+    espeak reads the Urdu words as Urdu and switches to English for English words."""
+    phonemes = kokoro.tokenizer.phonemize(text, "ur")
+    # espeak's Urdu gives "ʂ" (a Hindi-style retroflex) for plain s (س / ص): Urdu says s.
+    return _LANG_FLAG.sub("", phonemes).replace("ʂ", "s")
 
 
 # ── Playing audio ────────────────────────────────────────────────────────────

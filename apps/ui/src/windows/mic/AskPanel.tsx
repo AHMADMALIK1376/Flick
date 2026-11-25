@@ -55,7 +55,7 @@ export function AskPanel({ flow, autoFocus = true }: { flow: AskFlow; autoFocus?
         ? 'Writing…'
         : phase === 'answering'
           ? 'Asking Flick…'
-          : `Press ✓ to ask · closes in ${Math.ceil(closesIn / 1000)}s`;
+          : `Press Enter to ask · closes in ${Math.ceil(closesIn / 1000)}s`;
 
   return (
     <Box

@@ -233,3 +233,59 @@ def format_slide(slide: Slide) -> str:
 # The shared voice goes into the explanation prompts (kept as plain strings, built once).
 EXPLAIN_SYSTEM = EXPLAIN_SYSTEM.replace("@@VOICE@@", TEACHER_VOICE + "\n\n" + AUDIENCE_CLASS)
 EXPLAIN_BATCH_SYSTEM = EXPLAIN_BATCH_SYSTEM.replace("@@VOICE@@", TEACHER_VOICE + "\n\n" + AUDIENCE_CLASS)
+
+
+
+# ── Language: English, Urdu, or Urdu + English mixed ────────────────────────
+
+LANGUAGES = {"en": "English", "ur": "Urdu", "mix": "Urdu + English"}
+
+_LANGUAGE_RULES = {
+    "ur": """LANGUAGE: Speak Urdu. The everyday spoken Urdu a well-liked Pakistani teacher uses in class:
+warm, simple and clear, not formal or bookish (prefer common words over heavy Persian or Arabic ones).
+Write it in Urdu script, with Urdu punctuation (۔ ، ؟). Keep the technical terms Pakistani students already
+say in English (database, query, server, policy, function, app) in English letters, for example:
+"یہ query صرف وہی rows واپس لاتی ہے جن کی اجازت ہو۔" Everything above about how Flick talks applies in Urdu too:
+teach the idea, use a local example, ask the class a question, sound like a person.""",
+    "mix": """LANGUAGE: Talk the way Pakistani university teachers actually talk in class: Urdu and English mixed
+naturally inside the same sentences. Urdu carries the flow and the connecting words (تو، دیکھیں، مطلب،
+یعنی، اب، سمجھ آئی؟), English carries the technical terms and plenty of everyday phrases (basically,
+the main point is, simple, right?). Roughly half and half. Write the Urdu words in Urdu script and the English
+words in English letters, for example: "تو basically، database ہر user کو صرف اس کی اپنی rows دکھاتا ہے۔
+Simple سی بات ہے، right؟" Never write Urdu in English letters (no Roman Urdu): the voice cannot read it.""",
+}
+
+
+def language_rule(language: str, female: bool = True) -> str:
+    """The language instruction for words Flick says. English: no extra rule."""
+    rule = _LANGUAGE_RULES.get(language)
+    if not rule:
+        return ""
+    if female:
+        rule += "\nFlick's voice is a woman's: use feminine forms when Flick speaks about herself (کرتی ہوں، سمجھاتی ہوں)."
+    else:
+        rule += "\nFlick's voice is a man's: use masculine forms when Flick speaks about himself (کرتا ہوں، سمجھاتا ہوں)."
+    return rule
+
+
+def with_language(system: str, language: str, female: bool = True) -> str:
+    rule = language_rule(language, female)
+    return f"{system}\n\n{rule}" if rule else system
+
+
+def live_system(language: str = "en", female: bool = True) -> str:
+    if language == "en":
+        return LIVE_SYSTEM
+    return with_language(LIVE_SYSTEM.replace(
+        "- Reply in the language of the question (English, Urdu, or Roman Urdu).",
+        "- Reply in the language set below, whatever language the question was asked in.",
+    ), language, female)
+
+
+def explain_system(language: str = "en", female: bool = True) -> str:
+    if language == "en":
+        return EXPLAIN_SYSTEM
+    return with_language(EXPLAIN_SYSTEM.replace(
+        "- Speak in the language of the request (English, Urdu, or Roman Urdu).",
+        "- Speak in the language set below.",
+    ), language, female)

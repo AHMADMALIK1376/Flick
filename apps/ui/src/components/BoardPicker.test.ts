@@ -9,5 +9,7 @@ describe('styleLabel', () => {
     expect(styleLabel('story+example', names)).toBe('Story mode · Example every slide');
     expect(styleLabel('class+draw', names)).toBe('Standard · Draw every slide');
     expect(styleLabel('visual', names)).toBe('Visual mode');
+    expect(styleLabel('story+example#mix', names)).toBe('Story mode · Example every slide · Urdu + English');
+    expect(styleLabel('class#ur', names)).toBe('Standard · Urdu');
   });
 });
