@@ -63,6 +63,8 @@ class Presenter:
         self.total = 0
         self.line: Optional[str] = None
         self.message: Optional[str] = None
+        #: Why PowerPoint is not following the talk (None when it is).
+        self.powerpoint: Optional[str] = None
         self.paused_for: Optional[Literal["question", "manual"]] = None
         self.canvas_id: Optional[str] = None
         self._deck: Optional[Deck] = None
@@ -97,7 +99,16 @@ class Presenter:
             "deck_id": self._deck.id if self._deck else None,
             "style": self.style,
             "study": self.study,
+            "powerpoint": self.powerpoint,
         }
+
+    async def _show_in_powerpoint(self, n: int) -> None:
+        """Moves PowerPoint to slide n. If it can't, the talk goes on and the dashboard says why."""
+        deck = self._deck
+        problem = await self.service.bridge.show_slide(n, deck.file_path if deck else None, deck.name if deck else None)
+        if problem != self.powerpoint:
+            self.powerpoint = problem
+            self._publish()
 
     def _publish(self) -> None:
         self.service.events.publish("present", self.status())
@@ -114,6 +125,7 @@ class Presenter:
         self.slide = max(1, min(from_slide, self.total))
         self.line = None
         self.message = None
+        self.powerpoint = None
         self.paused_for = None
         self._stopped = False
         self._jump = None
@@ -126,6 +138,8 @@ class Presenter:
         if not self.active:
             return
         self._stopped = True
+        if self._task is not None and not self._task.done():
+            self._task.cancel()  # a new talk must never run alongside the old one
         self._cancel_question_timer()
         self._unpaused.set()
         self.service.speaker.stop()  # type: ignore[union-attr]
@@ -231,12 +245,12 @@ class Presenter:
         try:
             n = start
             if not self.study:
-                await service.bridge.show_slide(n)
+                await self._show_in_powerpoint(n)
             self.state = "presenting"
             first = True
             while n <= self.total and not self._stopped:
                 if not self.study and self.slide != n:
-                    await service.bridge.show_slide(n)
+                    await self._show_in_powerpoint(n)
                 self._close_canvas()
                 self.slide = n
                 self._publish()

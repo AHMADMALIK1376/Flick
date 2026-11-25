@@ -10,6 +10,8 @@ export interface FlickDesktop {
   hideCard(): void;
   showCanvas(): void;
   hideCanvas(): void;
+  /** Real path of a picked file (Electron); '' when unknown. */
+  pathForFile?(file: File): string;
 }
 
 declare global {

@@ -82,6 +82,11 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
           Finished presenting {deck.name}.
         </Text>
       )}
+      {status.powerpoint && !status.study && status.state !== 'idle' && status.state !== 'finished' && (
+        <Text fz={13} c="#ffe7a8" fw={600} mt={10} role="status">
+          ⚠️ {status.powerpoint}
+        </Text>
+      )}
       {status.state === 'error' && status.message && (
         <Text fz={13} c="#ffd5cf" fw={600} mt={10}>
           {status.message}
@@ -97,6 +102,7 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
           { value: 'story', label: '📖 Story' },
           { value: 'professional', label: '💼 Professional' },
           { value: 'exam', label: '🎯 Exam' },
+          { value: 'visual', label: '✏️ Visual' },
         ]}
         styles={{ root: { background: 'rgba(255,255,255,0.14)' }, label: { color: '#fff' }, indicator: { background: 'rgba(255,255,255,0.28)' } }}
         aria-label="How Flick explains"

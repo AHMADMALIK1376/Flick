@@ -12,7 +12,10 @@ import io
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import numpy as np
 
 #: Whisper sizes offered in Settings. 'small' balances speed and accuracy;
 #: 'medium' is better for Urdu but slower.
@@ -21,6 +24,46 @@ SIZES = ("base", "small", "medium")
 
 class TranscriberUnavailable(RuntimeError):
     """faster-whisper is not installed, or its model could not be loaded."""
+
+
+class AudioUnreadable(ValueError):
+    """The recording could not be decoded (empty, cut off, or an unknown format)."""
+
+
+SAMPLE_RATE = 16_000
+
+
+def decode_audio(audio: bytes) -> "np.ndarray":
+    """
+    Any recording (webm/opus from the mic, wav, mp3, m4a) → 16 kHz mono float32 samples.
+
+    We decode it ourselves instead of letting faster-whisper do it: faster-whisper 1.2 passes
+    an option that PyAV 15+ removed, which made every voice question fail.
+    """
+    import av
+    import numpy as np
+
+    if not audio:
+        raise AudioUnreadable("The recording is empty.")
+    try:
+        with av.open(io.BytesIO(audio), mode="r") as container:
+            stream = next((s for s in container.streams if s.type == "audio"), None)
+            if stream is None:
+                raise AudioUnreadable("The recording has no sound in it.")
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+            chunks = []
+            for frame in container.decode(stream):
+                for out in resampler.resample(frame):
+                    chunks.append(out.to_ndarray().reshape(-1))
+            for out in resampler.resample(None):  # flush
+                chunks.append(out.to_ndarray().reshape(-1))
+    except AudioUnreadable:
+        raise
+    except Exception as err:  # av.error.* (cut-off or unknown file)
+        raise AudioUnreadable(f"Could not read the recording: {err}") from err
+    if not chunks:
+        raise AudioUnreadable("The recording is empty.")
+    return (np.concatenate(chunks).astype(np.float32) / 32768.0).astype(np.float32)
 
 
 class Transcriber:
@@ -62,8 +105,11 @@ class Transcriber:
         self.load(size)
         if self._model is None:
             raise TranscriberUnavailable(self.error or "The speech model is not available.")
+        samples = decode_audio(audio)
+        if len(samples) < SAMPLE_RATE * 0.3:  # under 0.3 s: nothing was said
+            return "", int((time.perf_counter() - started) * 1000)
         segments, _info = self._model.transcribe(
-            io.BytesIO(audio),
+            samples,
             language=None if language == "auto" else language,
             beam_size=1,  # greedy decoding: much faster, near-identical for short questions
             vad_filter=True,  # skip leading/trailing silence

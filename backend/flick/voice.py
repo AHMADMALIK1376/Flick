@@ -219,6 +219,9 @@ class Speaker:
         self._worker: Optional[asyncio.Task] = None
         self.speaking = False
         self._closed = False
+        #: Goes up on every stop(). An answer remembers the number it started with and stops
+        #: voicing new sentences once it changes, even if its text keeps streaming in.
+        self.epoch = 0
 
     # Public ────────────────────────────────────────────────────────────────
 
@@ -249,6 +252,7 @@ class Speaker:
 
     def stop(self) -> None:
         """Stops at once: the sentence playing now is cut and the queue is emptied."""
+        self.epoch += 1
         queued, self._queue = self._queue, []
         for item in queued:
             if not item.done.done():

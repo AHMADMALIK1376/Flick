@@ -41,7 +41,7 @@ export function CanvasWindow() {
   if (!canvas) return null;
 
   return (
-    <Box h="100vh" p={10}>
+    <Box h="100vh" p={0}>
       <Box
         h="100%"
         style={{
@@ -49,7 +49,7 @@ export function CanvasWindow() {
           flexDirection: 'column',
           background: colors.surface,
           border: `1px solid ${colors.border}`,
-          borderRadius: 18,
+          borderRadius: 0,
           boxShadow: '0 18px 50px rgba(42,36,64,0.22)',
           overflow: 'hidden',
         }}
@@ -69,11 +69,11 @@ export function CanvasWindow() {
             <IconX size={16} />
           </ActionIcon>
         </Group>
-        <Box style={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center' }} p={12}>
-          <Whiteboard drawing={canvas.drawing} step={canvas.step} style={{ maxHeight: '100%', width: 'auto', maxWidth: '100%' }} />
+        <Box style={{ flex: 1, minHeight: 0, position: 'relative' }} p={12}>
+          <Whiteboard drawing={canvas.drawing} step={canvas.step} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', borderRadius: 0 }} />
         </Box>
         {canvas.say && (
-          <Text fz={17} lh={1.45} c={colors.ink} ta="center" px={24} pb={16}>
+          <Text fz={24} lh={1.4} fw={600} c={colors.ink} ta="center" px={32} pb={22}>
             {canvas.say}
           </Text>
         )}

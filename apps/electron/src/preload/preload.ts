@@ -12,6 +12,14 @@ function on(channel: string, callback: (...args: unknown[]) => void): () => void
 
 contextBridge.exposeInMainWorld('flick', {
   isDesktop: true,
+  /** The real path of a dropped or picked file, so Flick can open the same deck in PowerPoint. */
+  pathForFile: (file: File) => {
+    try {
+      return (file as File & { path?: string }).path || ''; // Electron 28 adds .path to files
+    } catch {
+      return '';
+    }
+  },
   /** Mic window: the Ask hotkey was pressed. */
   onToggleAsk: (callback: () => void) => on('flick:toggle-ask', () => callback()),
   /** Mic window: recording started / stopped (so the card can show "Listening…"). */

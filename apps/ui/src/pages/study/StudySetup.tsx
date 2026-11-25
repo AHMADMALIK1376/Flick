@@ -86,7 +86,7 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
       <Card>
         <StepLabel n={2}>How should Flick explain it?</StepLabel>
         <Radio.Group value={mode} onChange={setMode}>
-          <SimpleGrid cols={{ base: 1, md: 3 }} spacing={14}>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing={14}>
             {STUDY_MODES.map((m) => {
               const checked = m.id === mode;
               return (

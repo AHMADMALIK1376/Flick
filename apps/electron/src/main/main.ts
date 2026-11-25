@@ -19,7 +19,7 @@ import { Hotkeys } from './hotkeys';
 import { safeError, safeLog } from './logging';
 import { Backend, BackendInfo, launchPlan } from './sidecar';
 import { createTray } from './tray';
-import { createCanvas, createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
+import { canvasBounds, createCanvas, createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
 
 const SETTINGS_SYNC_MS = 3000;
 const DEV_UI_URL = 'http://127.0.0.1:5173';
@@ -132,9 +132,18 @@ ipcMain.on('flick:show-card', showCard);
 ipcMain.on('flick:hide-card', () => card?.hide());
 ipcMain.on('flick:show-canvas', () => {
   if (!canvas || canvas.isDestroyed()) return;
+  // The board fills the whole screen (over the slide show) so the audience can read it.
+  canvas.setBounds(canvasBounds());
   if (!canvas.isVisible()) canvas.showInactive(); // don't take focus from PowerPoint
   canvas.setAlwaysOnTop(true, 'screen-saver');
   canvas.moveTop();
+  // Answers and the mic stay on top of the board.
+  for (const win of [card, mic]) {
+    if (win && !win.isDestroyed() && win.isVisible()) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+      win.moveTop();
+    }
+  }
 });
 ipcMain.on('flick:hide-canvas', () => canvas?.hide());
 ipcMain.on('flick:listening', (_event, listening: boolean) => {

@@ -1,12 +1,13 @@
 // A study session: the slide, what Flick is saying, its whiteboard, and asking questions.
 import { ActionIcon, Badge, Box, Button, Card, Group, Loader, Progress, SimpleGrid, Stack, Text, TextInput, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconMicrophone, IconPlayerStop, IconSend } from '@tabler/icons-react';
+import { IconMaximize, IconMicrophone, IconPlayerStop, IconSend } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../api/flick';
 import type { Answer, Deck } from '../../api/types';
 import { OriginBadge } from '../../components/OriginBadge';
 import { PresentControls, presentLabel } from '../../components/PresentControls';
+import { BoardOverlay } from '../../components/whiteboard/BoardOverlay';
 import { Whiteboard } from '../../components/whiteboard/Whiteboard';
 import { useCanvas } from '../../hooks/useCanvas';
 import { useFlickEvent } from '../../hooks/useEvents';
@@ -19,6 +20,9 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
   const { status } = presenter;
   const [deck, setDeck] = useState<Deck | null>(null);
   const { canvas } = useCanvas('study');
+  // A new drawing opens big; "Make smaller" keeps it in the page until the next one.
+  const [smallBoard, setSmallBoard] = useState<string | null>(null);
+  const boardBig = !!canvas && smallBoard !== canvas.id;
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
@@ -131,6 +135,24 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
         <Card p={12}>
           {canvas ? (
             <>
+              {boardBig && (
+                <BoardOverlay
+                  drawing={canvas.drawing}
+                  step={canvas.step}
+                  say={canvas.say}
+                  slide={canvas.slide}
+                  paused={status.state === 'paused'}
+                  onMinimize={() => setSmallBoard(canvas.id)}
+                  onPause={presenter.pause}
+                  onResume={presenter.resume}
+                  onStop={presenter.stop}
+                />
+              )}
+              <Group justify="flex-end" mb={6}>
+                <Button size="xs" variant="subtle" leftSection={<IconMaximize size={14} />} onClick={() => setSmallBoard(null)}>
+                  Full screen
+                </Button>
+              </Group>
               <Whiteboard drawing={canvas.drawing} step={canvas.step} />
               {canvas.say && (
                 <Text fz={14.5} c={colors.ink} ta="center" mt={10} px={8}>
