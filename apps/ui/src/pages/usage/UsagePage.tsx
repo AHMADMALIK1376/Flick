@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/flick';
 import type { UsageReport } from '../../api/types';
 import { PageHeader } from '../../components/PageHeader';
+import { MODEL_EVENT } from '../../layout/ModelPicker';
 import { useFlickEvent } from '../../hooks/useEvents';
 import { colors } from '../../theme';
 import { tokens, usd } from './format';
@@ -64,6 +65,11 @@ export function UsagePage() {
   }, []);
 
   useEffect(load, [load]);
+  // The model was changed in the sidebar: show its prices.
+  useEffect(() => {
+    window.addEventListener(MODEL_EVENT, load);
+    return () => window.removeEventListener(MODEL_EVENT, load);
+  }, [load]);
   useEffect(() => () => {
     if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
   }, []);

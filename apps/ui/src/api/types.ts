@@ -103,6 +103,12 @@ export type SettingsUpdate = Partial<Omit<Settings, 'has_api_key'>>;
 export interface ModelOption {
   id: string;
   name: string;
+  /** "Haiku 5.5" */
+  short?: string;
+  /** One line: what it is good for. */
+  hint?: string;
+  /** USD per million input / output tokens, e.g. "$0.10 / $0.50" */
+  price?: string;
 }
 
 export interface Status {

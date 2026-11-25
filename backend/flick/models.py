@@ -128,9 +128,13 @@ class SettingsUpdate(BaseModel):
     voice_speed: Optional[float] = Field(default=None, ge=0.7, le=1.4)
 
 
-# Models offered in Settings. Haiku first: live answers are latency-bound.
+# Models offered in the sidebar and in Settings. Haiku first: live answers are latency-bound.
+# "price": USD per million input / output tokens (Claude list prices, see usage.PRICES).
 MODELS = [
-    {"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5 (fastest)"},
-    {"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5"},
-    {"id": "claude-opus-5-5", "name": "Claude Opus 5.5 (best, slower)"},
+    {"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "short": "Haiku 5.5",
+     "hint": "Fastest and cheapest. Best for live talks.", "price": "$0.10 / $0.50"},
+    {"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "short": "Sonnet 5.5",
+     "hint": "Smarter answers and drawings, a bit slower.", "price": "$2 / $10"},
+    {"id": "claude-opus-5-5", "name": "Claude Opus 5.5", "short": "Opus 5.5",
+     "hint": "The best answers. Slowest and most expensive.", "price": "$4 / $20"},
 ]
