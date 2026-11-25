@@ -3,6 +3,7 @@
 import { Badge, Box, Collapse, Group, SimpleGrid, Table, Text, UnstyledButton } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import type { UsageCard, UsageSums } from '../../api/types';
+import { styleLabel } from '../../components/BoardPicker';
 import { colors } from '../../theme';
 import { duration, tokens, usd, when } from './format';
 
@@ -103,7 +104,7 @@ export function UsageCardView({ card, open, onToggle }: { card: UsageCard; open:
               </Badge>
               {card.style && card.type !== 'prep' && (
                 <Badge size="sm" variant="outline" color="gray">
-                  {STYLE_NAMES[card.style] ?? card.style}
+                  {styleLabel(card.style, STYLE_NAMES)}
                 </Badge>
               )}
               {running && (

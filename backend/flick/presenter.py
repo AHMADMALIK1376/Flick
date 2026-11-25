@@ -42,8 +42,22 @@ CLOSING = "That's the end of the presentation. Thank you for listening! Are ther
 STUDY_CLOSING = "That's the whole presentation. Well done! Ask me anything you'd like to go over again."
 DRAW_INTRO = {"story": "Let me draw this part of the story."}
 DRAW_INTRO_DEFAULT = "Let me draw this to make it clearer."
+#: A drawing someone asked for ("go back to slide 6 and draw it"): worth waiting longer for.
+ASKED_DRAWING_WAIT_S = 30.0
+ASKED_DRAW_INTRO = {"example": "Let me draw a real-life example.", "draw": "Let me draw it for you."}
 #: The first slide's text may already greet the room: then Flick doesn't greet twice.
 _GREETS = re.compile(r"^(hello|hi\b|hey\b|good (morning|afternoon|evening)|welcome|assalam|salam)")
+
+
+@dataclass
+class _Detour:
+    """ "Go back to slide 6 and explain it again": explain `slide`, then return to `back`."""
+
+    slide: int
+    back: Optional[int]
+    board: str = "auto"  # auto | draw | example
+    request: Optional[str] = None
+    started: bool = False
 
 
 @dataclass
@@ -76,6 +90,7 @@ class Presenter:
         self._unpaused.set()
         self._stopped = False
         self._jump: Optional[int] = None
+        self._detour: Optional[_Detour] = None
         self._question_timer: Optional[asyncio.TimerHandle] = None
         self._just_resumed = False
 
@@ -132,6 +147,7 @@ class Presenter:
         self.paused_for = None
         self._stopped = False
         self._jump = None
+        self._detour = None
         self._unpaused.set()
         self.state = "starting"
         meter = self.service.usage
@@ -192,6 +208,30 @@ class Presenter:
         if self.state == "paused":
             self.resume()
 
+    def jump_to(self, slide: int) -> None:
+        """ "Go to slide 6": carry on the talk from there."""
+        if not self.active:
+            return
+        self._detour = None
+        self._jump = max(1, min(self.total, slide))
+        self.service.speaker.stop()  # type: ignore[union-attr]
+        if self.state == "paused":
+            self.resume()
+
+    def revisit(self, slide: int, board: str = "auto", request: Optional[str] = None) -> Optional[int]:
+        """ "Go back to slide 6 and explain it again (and draw it)": explain that slide, then come
+        back to the slide Flick was on and carry on. → the slide it will come back to."""
+        if not self.active:
+            return None
+        slide = max(1, min(self.total, slide))
+        back = self._detour.back if self._detour else self.slide  # a detour within a detour returns home
+        self._detour = _Detour(slide, back, board, request)
+        self._jump = slide
+        self.service.speaker.stop()  # type: ignore[union-attr]
+        if self.state == "paused":
+            self.resume()
+        return back
+
     async def question_answered(self) -> None:
         """Called after a question was answered: continue once the answer (and any drawing) was said."""
         if self.state != "paused" or self.paused_for != "question":
@@ -236,13 +276,13 @@ class Presenter:
                 if segment.canvas.get("action") == "open":
                     self.canvas_id = segment.canvas["id"]
                 self.service.events.publish("canvas", segment.canvas)
-            if await self._say(segment.text):
+            if not segment.text or await self._say(segment.text):
                 i += 1
 
-    def _drawing_segments(self, drawing: dict, slide: int) -> list[_Segment]:
+    def _drawing_segments(self, drawing: dict, slide: int, intro: bool = True) -> list[_Segment]:
         canvas_id = str(uuid.uuid4())
         opened = {"action": "open", "id": canvas_id, "slide": slide, "target": self.target, **drawing}
-        segments = [_Segment(DRAW_INTRO.get(self.style, DRAW_INTRO_DEFAULT), opened)]
+        segments = [_Segment(DRAW_INTRO.get(self.style.partition('+')[0], DRAW_INTRO_DEFAULT) if intro else "", opened)]
         for number, step in enumerate(drawing["steps"], start=1):
             event = {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": self.target}
             for k, sentence in enumerate(split_sentences(step["say"])):
@@ -265,8 +305,28 @@ class Presenter:
                 usage.set_tag(slide=n)
                 self._publish()
 
+                detour = self._detour if self._detour and self._detour.slide == n and not self._detour.started else None
+                if detour:
+                    detour.started = True
+                    if detour.board != "auto":  # start drawing now, while the slide is explained
+                        asked = service.requested_drawing(deck, n, self.style, detour.board, detour.request)
+                    if detour.back == n:
+                        intro = "Sure, let me explain this slide again."
+                    elif detour.back and detour.back > n:
+                        intro = f"Sure. Let's go back to slide {n}."
+                    else:
+                        intro = f"Sure. Let's look at slide {n}."
+                    await self._speak([_Segment(intro)])
+                    if self._stopped or self._jump is not None:
+                        if self._stopped:
+                            return
+                        n, self._jump = self._jump, None
+                        continue
+
                 # What to say now; the drawing (if any) is planned meanwhile.
                 text, drawing_job = await service.slide_plan(deck, n, self.style)
+                if detour and detour.board != "auto":
+                    drawing_job = asked
                 service.prefetch_slide_plan(deck, n + 1, self.style)
                 sentences = split_sentences(text)
                 if first and n == 1 and not _GREETS.match(text.strip().lower()):
@@ -276,14 +336,33 @@ class Presenter:
 
                 await self._speak([_Segment(s) for s in sentences])
                 if not self._stopped and self._jump is None:
-                    drawing = await _result(drawing_job, DRAWING_WAIT_S)
-                    if drawing:
-                        await self._speak(self._drawing_segments(drawing, n))
+                    if detour and detour.board != "auto":
+                        await self._speak([_Segment(ASKED_DRAW_INTRO[detour.board])])
+                        drawing = await _result(drawing_job, ASKED_DRAWING_WAIT_S)
+                        if drawing:
+                            await self._speak(self._drawing_segments(drawing, n, intro=False))
+                    else:
+                        drawing = await _result(drawing_job, DRAWING_WAIT_S)
+                        if drawing:
+                            await self._speak(self._drawing_segments(drawing, n))
                 if self._stopped:
                     return
                 if self._jump is not None:
                     n, self._jump = self._jump, None
                     continue
+                if detour and self._detour is detour:
+                    # Done with the slide they asked for: back to where the talk was.
+                    self._detour = None
+                    if detour.back and detour.back != n:
+                        self._close_canvas()
+                        await self._speak([_Segment(f"Now, back to slide {detour.back}.")])
+                        if self._stopped:
+                            return
+                        if self._jump is not None:
+                            n, self._jump = self._jump, None
+                        else:
+                            n = detour.back
+                        continue
                 n += 1
                 if n <= self.total:
                     await asyncio.sleep(SLIDE_GAP_S)

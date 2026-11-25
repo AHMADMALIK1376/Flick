@@ -3,7 +3,7 @@
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/flick';
-import type { PresentStatus } from '../api/types';
+import type { Board, PresentStatus } from '../api/types';
 import { useFlickEvent } from './useEvents';
 
 const IDLE: PresentStatus = {
@@ -48,9 +48,9 @@ export function usePresenter() {
     status,
     active,
     busy,
-    start: (fromSlide?: number, style?: string) => run(() => api.presentStart(fromSlide, style)),
-    startStudy: (style: string, deckId?: string, fromSlide?: number) =>
-      run(() => api.studyStart(style, deckId, fromSlide)),
+    start: (fromSlide?: number, style?: string, board?: Board) => run(() => api.presentStart(fromSlide, style, board)),
+    startStudy: (style: string, deckId?: string, fromSlide?: number, board?: Board) =>
+      run(() => api.studyStart(style, deckId, fromSlide, board)),
     pause: () => run(api.presentPause),
     resume: () => run(api.presentResume),
     next: () => run(api.presentNext),

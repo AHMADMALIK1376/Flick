@@ -121,15 +121,27 @@ async function syncSettings(): Promise<void> {
 
 // ── IPC from the UI windows ─────────────────────────────────────────────────
 
+// While Flick draws, the whiteboard has the screen: the answer card steps out of the way
+// (hidden, not closed) and comes back when the board is put away.
+let boardOpen = false;
+let cardWaiting = false; // the card wanted to show while the board was open
+
 function showCard(): void {
   if (!card || card.isDestroyed()) return;
+  if (boardOpen) {
+    cardWaiting = true;
+    return;
+  }
   if (!card.isVisible()) card.showInactive(); // don't take focus from PowerPoint
   card.setAlwaysOnTop(true, 'screen-saver');
   card.moveTop();
 }
 
 ipcMain.on('flick:show-card', showCard);
-ipcMain.on('flick:hide-card', () => card?.hide());
+ipcMain.on('flick:hide-card', () => {
+  cardWaiting = false;
+  card?.hide();
+});
 ipcMain.on('flick:show-canvas', () => {
   if (!canvas || canvas.isDestroyed()) return;
   // The board fills the whole screen (over the slide show) so the audience can read it.
@@ -137,15 +149,26 @@ ipcMain.on('flick:show-canvas', () => {
   if (!canvas.isVisible()) canvas.showInactive(); // don't take focus from PowerPoint
   canvas.setAlwaysOnTop(true, 'screen-saver');
   canvas.moveTop();
-  // Answers and the mic stay on top of the board.
-  for (const win of [card, mic]) {
-    if (win && !win.isDestroyed() && win.isVisible()) {
-      win.setAlwaysOnTop(true, 'screen-saver');
-      win.moveTop();
-    }
+  boardOpen = true;
+  // The answer card must not cover the drawing: it waits until the board closes.
+  if (card && !card.isDestroyed() && card.isVisible()) {
+    cardWaiting = true;
+    card.hide();
+  }
+  // The mic stays reachable on top of the board (to ask a question or say "stop").
+  if (mic && !mic.isDestroyed() && mic.isVisible()) {
+    mic.setAlwaysOnTop(true, 'screen-saver');
+    mic.moveTop();
   }
 });
-ipcMain.on('flick:hide-canvas', () => canvas?.hide());
+ipcMain.on('flick:hide-canvas', () => {
+  canvas?.hide();
+  boardOpen = false;
+  if (cardWaiting) {
+    cardWaiting = false;
+    showCard();
+  }
+});
 ipcMain.on('flick:mic-mode', (_event, mode: unknown) => {
   if (!mic || mic.isDestroyed()) return;
   const panel = mode === 'panel';

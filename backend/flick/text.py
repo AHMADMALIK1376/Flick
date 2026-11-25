@@ -183,3 +183,94 @@ def parse_draw_request(text: str) -> Optional[str]:
     if _EXAMPLE.search(t) and asks:
         return "example"
     return None
+
+
+# ── "Go back to slide 6 and explain it again (draw it / give an example)" ───
+
+@dataclass(frozen=True)
+class SlideRequest:
+    """A command about a slide (not a question):
+    action 'explain' → show it, explain it again, then come back to where Flick was;
+    action 'goto'    → just move there (a talk carries on from that slide).
+    board: 'auto' (draw only if it helps) | 'draw' (draw it) | 'example' (draw a real-life example)."""
+
+    target: SlideTarget
+    action: str = "explain"
+    board: str = "auto"
+
+
+_GOTO = re.compile(
+    r"\b(go(ing)?|jump|move|skip|switch|head|come)\b.{0,12}\b(back\s+)?to\b|\bback to\b|\breturn to\b|\brevisit\b"
+    r"|\b(open|show|display|bring up|put up)\b|\btake (me|us) (back )?to\b|\bpe (jao|jayen|chalo)\b|\bwapas\b"
+)
+_AGAIN = re.compile(
+    r"\b(again|once more|one more time|repeat|re-?explain|re-?do|recap|revise|dobara|phir se)\b"
+)
+_PRESENT_VERB = re.compile(r"\b(present|cover|teach|discuss|tell (me|us) about|explain)\b")
+#: Long requests are fine here ("go back to slide 6, explain it again and draw an example"),
+#: but a paragraph is a question.
+MAX_SLIDE_REQUEST_WORDS = 30
+
+
+def _slide_target(t: str) -> Optional[SlideTarget]:
+    if re.search(r"\b(next|agli|agla)\b.{0,12}\bslide|اگلی", t):
+        return SlideTarget("relative", offset=1)
+    if re.search(r"\b(previous|last|pichli|pichla)\b.{0,12}\bslide|پچھلی", t):
+        return SlideTarget("relative", offset=-1)
+    digits = re.search(r"\bslides?\s*(?:number\s*|no\s*|#\s*)?(\d{1,3})\b", t) or re.search(
+        r"\b(\d{1,3})(?:st|nd|rd|th)?\s+slide\b", t
+    )
+    if digits and int(digits.group(1)) > 0:
+        return SlideTarget("number", number=int(digits.group(1)))
+    word = re.search(r"\bslides?\s*(?:number\s*)?([a-z]+)\b", t) or re.search(r"\b([a-z]+)\s+slide\b", t)
+    if word and word.group(1) in NUMBER_WORDS:
+        return SlideTarget("number", number=NUMBER_WORDS[word.group(1)])
+    if re.search(r"\b(this|current|same)\s+slide\b", t):
+        return SlideTarget("current")
+    return None
+
+
+def parse_slide_request(text: str) -> Optional[SlideRequest]:
+    """
+    "Go to slide number 6 and explain me again"         → explain slide 6 (then come back)
+    "Ma'am, can you please explain slide 6?"              → explain slide 6
+    "Go back to slide 6 and draw it" / "...with an example" → explain slide 6 + drawing / example
+    "Go to slide 6" / "open slide 6"                      → just move to slide 6
+    "Explain this slide again"                            → the current slide again
+    None for questions about a slide ("why does slide 3 say...?") and anything without a slide.
+    """
+    t = " ".join(re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split())
+    t = re.sub(r"^(hey |ok |okay )?flick\s*", "", t).strip()
+    if not t or len(t.split()) > MAX_SLIDE_REQUEST_WORDS or not SLIDE_WORD.search(t) or QUESTION_WORDS.search(t):
+        return None
+    # "What is on slide 6?" / "Does slide 3 show the cost?" are questions about a slide.
+    if re.match(r"^(what|who|when|where|which|is|are|does|did|do)\b", t):
+        return None
+    target = _slide_target(t)
+    if target is None:
+        return None
+    board = "example" if _EXAMPLE.search(t) else "draw" if _DRAW.search(t) else "auto"
+    explain = bool(EXPLAIN_VERB.search(t) or _AGAIN.search(t) or _PRESENT_VERB.search(t)) or board != "auto"
+    if explain:
+        return SlideRequest(target, "explain", board)
+    if _GOTO.search(t):
+        return SlideRequest(target, "goto", "auto")
+    return None
+
+
+#: Sounds like a request to go back to something, without saying which slide: Claude decides.
+_ROUTE_CUES = re.compile(
+    r"\b(go(ing)? back|again|once more|one more time|repeat|revisit|re-?explain|recap|go over|take (me|us) back"
+    r"|return to|jump to|go to|dobara|phir se|wapas)\b"
+)
+
+
+def needs_routing(text: str) -> bool:
+    """A short request that sounds like "go back to the RLS part again": Claude picks the slide."""
+    t = " ".join(re.sub(r"[“”\"'`’،,.!?؟۔:;()\-]", " ", text.lower()).split())
+    t = re.sub(r"^(hey |ok |okay )?flick\s*", "", t).strip()
+    if not t or len(t.split()) > MAX_SLIDE_REQUEST_WORDS or QUESTION_WORDS.search(t):
+        return False
+    if re.match(r"^(what|how|who|when|where|which|is|are|does|did|do|should|will)\b", t):
+        return False  # "how do I go back to the menu?" is a question
+    return bool(_ROUTE_CUES.search(t))

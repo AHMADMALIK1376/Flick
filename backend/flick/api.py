@@ -54,7 +54,8 @@ class ExplainRequest(BaseModel):
 
 class PresentRequest(BaseModel):
     from_slide: Optional[int] = None  # None = from the first slide
-    style: str = "class"  # class | story | professional | exam
+    style: str = "class"  # class | story | professional | exam | visual
+    board: str = "auto"  # whiteboard: auto (only when it helps) | draw (every slide) | example (every slide)
 
 
 class SayRequest(BaseModel):
@@ -63,6 +64,7 @@ class SayRequest(BaseModel):
 
 class StudyRequest(BaseModel):
     style: str = "story"
+    board: str = "auto"
     from_slide: Optional[int] = None
     deck_id: Optional[str] = None  # None = the active presentation
 
@@ -277,7 +279,7 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     @app.post("/present/start", dependencies=auth)
     async def present_start(req: PresentRequest) -> dict:
         try:
-            return service.start_presenting(req.from_slide, req.style)
+            return service.start_presenting(req.from_slide, req.style, req.board)
         except UserError as err:
             raise user_error(err)
 
@@ -285,7 +287,7 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     async def study_start(req: StudyRequest) -> dict:
         """A student's study session: Flick explains the deck in the chosen style, on the Study page."""
         try:
-            return service.start_study(req.style, req.from_slide, req.deck_id)
+            return service.start_study(req.style, req.from_slide, req.deck_id, req.board)
         except UserError as err:
             raise user_error(err)
 

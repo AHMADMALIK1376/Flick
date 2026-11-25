@@ -3,7 +3,8 @@
 import { Badge, Box, Button, Card, Group, NumberInput, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
 import { IconPlayerPlay, IconSpeakerphone } from '@tabler/icons-react';
 import { useState } from 'react';
-import type { Deck, Status } from '../../api/types';
+import type { Board, Deck, Status } from '../../api/types';
+import { BoardPicker } from '../../components/BoardPicker';
 import { PresentControls, presentLabel } from '../../components/PresentControls';
 import type { Presenter } from '../../hooks/usePresenter';
 import { colors } from '../../theme';
@@ -18,6 +19,7 @@ interface Props {
 export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
   const [fromSlide, setFromSlide] = useState<number>(1);
   const [style, setStyle] = useState('class');
+  const [board, setBoard] = useState<Board>('auto');
   const { status, active } = presenter;
 
   if (active) {
@@ -107,13 +109,14 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
         styles={{ root: { background: 'rgba(255,255,255,0.14)' }, label: { color: '#fff' }, indicator: { background: 'rgba(255,255,255,0.28)' } }}
         aria-label="How Flick explains"
       />
+      <BoardPicker value={board} onChange={setBoard} style={style} dark />
       <Group gap={10} mt={14} align="flex-end">
         <Button
           size="lg"
           leftSection={<IconPlayerPlay size={20} />}
           loading={presenter.busy}
           disabled={!voiceReady}
-          onClick={() => presenter.start(fromSlide, style)}
+          onClick={() => presenter.start(fromSlide, style, board)}
         >
           Present for me
         </Button>

@@ -14,6 +14,7 @@ import type {
   Settings,
   SettingsUpdate,
   Status,
+  Board,
   UsageReport,
 } from './types';
 
@@ -76,11 +77,12 @@ export const api = {
 
   // ── Present for me ──
   presentStatus: () => request<PresentStatus>('GET', '/present'),
-  presentStart: (fromSlide?: number, style = 'class') =>
-    request<PresentStatus>('POST', '/present/start', { from_slide: fromSlide ?? null, style }),
-  /** A student's study session in a style: story | professional | exam. */
-  studyStart: (style: string, deckId?: string, fromSlide?: number) =>
-    request<PresentStatus>('POST', '/study/start', { style, deck_id: deckId ?? null, from_slide: fromSlide ?? null }),
+  /** board: the whiteboard option, auto (only when it helps) | draw (every slide) | example (every slide). */
+  presentStart: (fromSlide?: number, style = 'class', board: Board = 'auto') =>
+    request<PresentStatus>('POST', '/present/start', { from_slide: fromSlide ?? null, style, board }),
+  /** A student's study session in a style: story | professional | exam | visual (+ whiteboard option). */
+  studyStart: (style: string, deckId?: string, fromSlide?: number, board: Board = 'auto') =>
+    request<PresentStatus>('POST', '/study/start', { style, deck_id: deckId ?? null, from_slide: fromSlide ?? null, board }),
   styles: () => request<ModelOption[]>('GET', '/styles'),
   presentPause: () => request<PresentStatus>('POST', '/present/pause'),
   presentResume: () => request<PresentStatus>('POST', '/present/resume'),

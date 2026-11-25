@@ -39,7 +39,10 @@ from .text import (
     is_bare_address,
     is_nothing_heard,
     is_plain_explain_request,
+    needs_routing,
     parse_draw_request,
+    parse_slide_request,
+    SlideRequest,
     parse_present_command,
     parse_slide_command,
 )
@@ -52,6 +55,19 @@ ONE_MOMENT = "One moment, let me check."
 RECENT_FOR_CONTEXT = 3
 #: Older questions are a different conversation, not context.
 RECENT_WINDOW_S = 10 * 60
+
+
+ROUTER_MAX_TOKENS = 80
+ROUTER_SYSTEM = """You route what someone said to Flick, an AI presenter, during a presentation.
+Decide: is it a QUESTION to answer, or a REQUEST about a slide (go back to it, explain it again,
+draw it, give an example of it)? If it is a request, pick the slide it is about from the list
+(by number, or by topic: "the security part" → the slide about security; "this one" → the slide on screen).
+
+Reply with ONLY JSON:
+{"type": "question"}
+or {"type": "slide", "slide": <number>, "action": "explain" | "goto", "board": "auto" | "draw" | "example"}
+"explain": they want it explained again. "goto": they only want to see it. "draw": they asked to draw /
+visualise it. "example": they asked for an example. When unsure, it is a question."""
 
 
 class UserError(Exception):
@@ -303,6 +319,13 @@ class FlickService:
         present = parse_present_command(question, self.presenter.active)
         if present:
             return self._present_command(present, question, started)
+        request = parse_slide_request(question)
+        if request is None and needs_routing(question):
+            request = await self._route(question)  # "go over the RLS part again": Claude picks the slide
+        if request is not None:
+            handled = await self.slide_request(request, question, started)
+            if handled is not None:
+                return handled
         command = parse_slide_command(question)
         if command:
             return await self.explain_slide(command, question)
@@ -587,15 +610,17 @@ class FlickService:
             raise UserError("Flick's voice is still getting ready (first start only). Try again in a minute.")
         return deck
 
-    def start_presenting(self, from_slide: Optional[int] = None, style: str = "class") -> dict:
+    def start_presenting(self, from_slide: Optional[int] = None, style: str = "class", board: Optional[str] = None) -> dict:
         """'Present for me': Flick gives the talk to the class, driving PowerPoint."""
         deck = self._check_can_present(self.active_deck())
         self.presenter.stop()
         self.speaker.stop()  # type: ignore[union-attr]
-        self.presenter.start(deck, from_slide or 1, style=_style(style), study=False)
+        self.presenter.start(deck, from_slide or 1, style=_style(style, board), study=False)
         return self.presenter.status()
 
-    def start_study(self, style: str, from_slide: Optional[int] = None, deck_id: Optional[str] = None) -> dict:
+    def start_study(
+        self, style: str, from_slide: Optional[int] = None, deck_id: Optional[str] = None, board: Optional[str] = None
+    ) -> dict:
         """A student's study session: Flick explains the deck in the chosen style (no PowerPoint)."""
         if deck_id:
             if self.db.get_deck(deck_id) is None:
@@ -604,7 +629,7 @@ class FlickService:
         deck = self._check_can_present(self.active_deck())
         self.presenter.stop()
         self.speaker.stop()  # type: ignore[union-attr]
-        self.presenter.start(deck, from_slide or 1, style=_style(style), study=True)
+        self.presenter.start(deck, from_slide or 1, style=_style(style, board), study=True)
         return self.presenter.status()
 
     # ── What Flick says per slide, and whether it draws ────────────────────
@@ -623,14 +648,14 @@ class FlickService:
             self._plans.pop(key, None)
             slide = next((s for s in deck.slides if s.number == number), None)
             return (f"Let's look at {slide.title}." if slide and slide.title else ""), None
-        if style == "class":
+        if lessons.base_style(style) == "class":
             return text, self._drawing_job(deck, number, style, text)
         done: asyncio.Future = asyncio.get_running_loop().create_future()
         done.set_result(drawing)
         return text, done
 
     async def _make_plan(self, deck: Deck, number: int, style: str) -> tuple[str, Optional[dict]]:
-        if style == "class":
+        if lessons.base_style(style) == "class":
             return await self.slide_explanation(deck, number), None
         cached = self.db.get_lesson(deck.id, number, style)
         if cached is not None:
@@ -705,17 +730,135 @@ class FlickService:
         if self.speaker:
             await self.speaker.idle()
 
+    # ── "Go back to slide 6 and explain it again" ─────────────────────────────
+
+    async def _route(self, question: str) -> Optional[SlideRequest]:
+        """For a request like "go over the security part again": which slide, and what to do.
+        Claude decides (a tiny, fast call). None → it's a normal question."""
+        deck = self.active_deck()
+        if deck is None or not deck.slides:
+            return None
+        current = self.presenter.slide if self.presenter.active else await self.bridge.current_slide()
+        titles = "\n".join(f"{s.number}. {s.title or '(untitled)'}" for s in deck.slides)
+        message = f"Slides:\n{titles}\n\nOn screen now: slide {current or 'unknown'}\n\nThey said: \"{question}\""
+        try:
+            with usage.tagged(kind="question", card=self.usage_card("questions", "Questions", deck)):
+                raw = await self.llm.complete(ROUTER_SYSTEM, message, ROUTER_MAX_TOKENS)
+        except LLMError:
+            return None
+        data = lessons._json_object(raw)
+        if not data or data.get("type") != "slide":
+            return None
+        try:
+            number = int(data.get("slide"))
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= number <= len(deck.slides):
+            return None
+        action = "goto" if data.get("action") == "goto" else "explain"
+        board = data.get("board") if data.get("board") in ("draw", "example") else "auto"
+        return SlideRequest(SlideTarget("number", number=number), action, board)
+
+    async def slide_request(self, request: SlideRequest, question: str, started: float) -> Optional[Answer]:
+        """Goes to a slide and (for 'explain') explains it again, then comes back. During a talk the
+        presenter does it; otherwise Flick moves PowerPoint, explains, and returns to the slide that
+        was on screen. None → not possible here (answered as a normal request instead)."""
+        deck = self.active_deck()
+        if deck is None:
+            return None
+        presenting = self.presenter.active
+        here = self.presenter.slide if presenting else await self.bridge.current_slide(fresh=True)
+        target = request.target
+        if target.kind == "number":
+            number: Optional[int] = target.number
+        elif here is None:
+            number = None
+        else:
+            number = here + (target.offset if target.kind == "relative" else 0)
+        if number is None or not 1 <= number <= len(deck.slides):
+            if number is not None:
+                return self._finish(
+                    self._error(question, f"This presentation has {len(deck.slides)} slides, so there is no slide {number}.", None, started),
+                    deck,
+                )
+            return None
+
+        def note(text: str) -> Answer:  # shown on the card; Flick says it itself
+            answer = Answer(id=str(uuid.uuid4()), question=question, answer=text, origin="explain",
+                            current_slide=number, timestamp=started, speak=False,
+                            duration_ms=_ms_since(started))
+            self.events.publish("answer", answer.model_dump())
+            self.db.add_log(answer, deck.id)
+            return answer
+
+        if presenting:
+            if request.action == "goto":
+                self.presenter.jump_to(number)
+                return note(f"Going to slide {number}. The talk carries on from there.")
+            back = self.presenter.revisit(number, request.board, question)
+            extra = {"draw": " with a drawing", "example": " with a real-life example"}.get(request.board, "")
+            then = f" then back to slide {back}" if back and back != number else " then carry on"
+            return note(f"Explaining slide {number} again{extra},{then}.")
+
+        # Not presenting: move PowerPoint, explain, come back.
+        if request.action == "goto":
+            problem = await self.bridge.show_slide(number, deck.file_path, deck.name) if self.bridge.supported else None
+            if problem:
+                return self._finish(self._error(question, problem, None, started), deck)
+            return note(f"Showing slide {number}.")
+        if self.bridge.supported and number != here:
+            await self.bridge.show_slide(number, deck.file_path, deck.name)
+        answer = await self.explain_slide(SlideTarget("number", number=number), question)
+        if answer.origin == "error":
+            return answer
+        # "Explain slide 6" from slide 8: come back to 8 afterwards. "Explain the next slide": stay there.
+        back = here if target.kind == "number" else None
+        self._background(self._after_explaining(request, question, number, back, deck))
+        return answer
+
+    async def _after_explaining(self, request: SlideRequest, question: str, number: int, back: Optional[int], deck: Deck) -> None:
+        """After "explain slide 6 again": draw it if they asked, then show the slide they were on."""
+        try:
+            await self.wait_until_quiet()
+            if request.board != "auto":
+                kind = "example" if request.board == "example" else "draw"
+                await self._draw_on_request(kind, question, time.time(), slide_number=number)
+                await self.wait_until_quiet()
+            if back and back != number and self.bridge.supported and not self.presenter.active:
+                await self.bridge.show_slide(back, deck.file_path, deck.name)
+        except Exception:
+            pass
+
+    def requested_drawing(self, deck: Deck, number: int, style: str, board: str, request: Optional[str]) -> "asyncio.Future":
+        """A drawing someone asked for during the talk ("...and draw it", "...with an example")."""
+        slide = next((s for s in deck.slides if s.number == number), None)
+        context = self.db.get_lesson(deck.id, number, style) or self.db.get_explanation(deck.id, number)
+        ask = request or ("Draw a real-life example of this slide." if board == "example" else "Draw this slide.")
+        if board == "example" and "example" not in ask.lower():
+            ask += " (Draw a concrete real-life example.)"
+
+        async def make() -> Optional[dict]:
+            raw = await self.llm.complete(
+                lessons.draw_system(style, asked=True), lessons.draw_message(deck, slide, context, ask), lessons.DRAW_MAX_TOKENS
+            )
+            return lessons.parse_drawing(raw)
+
+        with usage.tagged(kind="example" if board == "example" else "drawing", slide=number, style=style, deck_id=deck.id):
+            return asyncio.ensure_future(make())
+
     # ── "Draw this" / "give me an example" / "explain with a story" ─────────
 
-    async def _draw_on_request(self, kind: str, question: str, started: float) -> Optional[Answer]:
+    async def _draw_on_request(
+        self, kind: str, question: str, started: float, slide_number: Optional[int] = None
+    ) -> Optional[Answer]:
         """Draws on the whiteboard and explains it step by step. None → answer in words instead."""
         deck = self.active_deck()
         if deck is None:
             return None
         presenting = self.presenter.active
-        number = self.presenter.slide if presenting else await self.bridge.current_slide()
+        number = slide_number or (self.presenter.slide if presenting else await self.bridge.current_slide())
         slide = next((s for s in deck.slides if s.number == number), None) if number else None
-        style = "story" if kind == "story" else (self.presenter.style if presenting else "class")
+        style = "story" if kind == "story" else (lessons.base_style(self.presenter.style) if presenting else "class")
         context = None
         if number:
             context = self.db.get_lesson(deck.id, number, style) or self.db.get_explanation(deck.id, number)
@@ -806,8 +949,10 @@ class FlickService:
         task.add_done_callback(self._tasks.discard)
 
 
-def _style(style: Optional[str]) -> str:
-    return style if style in lessons.STYLES else "class"
+def _style(style: Optional[str], board: Optional[str] = None) -> str:
+    """A mode plus the whiteboard option: "story" + "example" → "story+example"."""
+    base, given = lessons.split_style(style or "class")
+    return lessons.make_style(base, board or given)
 
 
 def _ms_since(started: float) -> int:

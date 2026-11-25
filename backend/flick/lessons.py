@@ -126,30 +126,73 @@ _WHEN_ASKED = """Someone ASKED for this ("draw it", "give an example", "explain 
 Answer their request: if they asked about something specific, draw that. If they asked for an example or a story,
 the drawing is a concrete daily-life example or a short story scene."""
 
-_WHEN_VISUAL = """Visual mode: always draw a concrete example, unless the slide is only a title, agenda or thank-you
-slide (then reply {"drawing": null})."""
+_WHEN_VISUAL = """Always draw (this talk draws every slide, see the whiteboard note above), unless the slide is
+only a title, agenda or thank-you slide (then reply {"drawing": null})."""
 
 _CLASS_GUIDE = """STANDARD STYLE. Clear and friendly, like a good teacher explaining to the class, with a simple
 everyday example."""
 
 
+#: The whiteboard option inside every mode. A style can carry it: "story+example", "class+draw".
+BOARDS: dict[str, str] = {
+    "auto": "Only when it helps",
+    "draw": "Draw every slide",
+    "example": "Example on every slide",
+}
+_BOARD_GUIDE = {
+    "draw": """WHITEBOARD: draw on EVERY content slide: a clear picture of the slide's idea (how the parts
+connect, the steps of a process, a comparison side by side), in this style.""",
+    "example": """WHITEBOARD: on EVERY content slide, draw ONE concrete daily-life example that makes the idea
+obvious (a chai dhaba, a cricket team, a bank queue, a WhatsApp group, a university canteen), in this style.""",
+}
+
+
+def split_style(style: str) -> tuple[str, str]:
+    """ "story+example" → ("story", "example"); "exam" → ("exam", "auto"). Visual mode always draws examples."""
+    base, _, board = (style or "class").partition("+")
+    base = base if base in STYLES else "class"
+    if base == "visual":
+        return base, "example"
+    return base, board if board in _BOARD_GUIDE else "auto"
+
+
+def base_style(style: str) -> str:
+    return split_style(style)[0]
+
+
+def make_style(base: Optional[str], board: Optional[str] = None) -> str:
+    """The style key used for caching and prompts: "story", "story+draw", "class+example"..."""
+    base = base if base in STYLES else "class"
+    if base == "visual" or board not in _BOARD_GUIDE:
+        return base
+    return f"{base}+{board}"
+
+
+def always_draws(style: str) -> bool:
+    return split_style(style)[1] != "auto"
+
+
 def style_guide(style: str) -> str:
-    return _STYLE_GUIDE.get(style, _CLASS_GUIDE)
+    base, board = split_style(style)
+    guide = _STYLE_GUIDE.get(base, _CLASS_GUIDE)
+    if base != "visual" and board in _BOARD_GUIDE:
+        guide += "\n\n" + _BOARD_GUIDE[board]
+    return guide
 
 
 _LESSON_DRAW_WHEN = "Then decide whether a whiteboard drawing would REALLY help this slide (see the drawing rules)."
-_LESSON_DRAW_VISUAL = """Then ALWAYS make the drawing (visual mode), except for a pure title, agenda or thank-you slide
-(drawing null). In visual mode the "Draw ONLY when..." rule below does not apply: every content slide gets its
-example drawn. "text" is only the short lead-in (25-45 words)."""
+_LESSON_DRAW_VISUAL = """Then ALWAYS make the drawing, except for a pure title, agenda or thank-you slide (drawing null).
+The "Draw ONLY when..." rule below does not apply here: every content slide gets its drawing.
+In visual mode "text" is only the short lead-in (25-45 words); in other styles keep the style's length."""
 
 
 def lesson_system(style: str) -> str:
-    when = _LESSON_DRAW_VISUAL if style == "visual" else _LESSON_DRAW_WHEN
+    when = _LESSON_DRAW_VISUAL if always_draws(style) else _LESSON_DRAW_WHEN
     return LESSON_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, draw_when=when)
 
 
 def draw_system(style: str, asked: bool) -> str:
-    when = _WHEN_ASKED if asked else _WHEN_VISUAL if style == "visual" else _WHEN_AUTO
+    when = _WHEN_ASKED if asked else _WHEN_VISUAL if always_draws(style) else _WHEN_AUTO
     return DRAW_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, when=when)
 
 

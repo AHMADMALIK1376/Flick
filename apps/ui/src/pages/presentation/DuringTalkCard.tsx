@@ -45,7 +45,8 @@ export function DuringTalkCard({ askHotkey, explainHotkey }: { askHotkey: string
       <Box mt={18} p="14px 16px" style={{ background: colors.explainBg, borderRadius: 12 }}>
         <Text fz={13} c={colors.explainText}>
           <b>Want Flick to present a slide?</b> Say “Flick, explain this slide”, or press {explainHotkey}. Flick
-          explains it to the audience, out loud, with examples.
+          explains it to the audience, out loud, with examples. Need an earlier slide? “Flick, go back to slide 6 and
+          explain it with an example”: it goes there, explains and draws, then comes back to where you were.
         </Text>
       </Box>
     </Card>
