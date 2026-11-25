@@ -1,20 +1,22 @@
-"""Auto-present: Flick gives the whole talk.
+"""Flick gives the talk: "Present for me" (in class) and study sessions (for students).
 
-    start → for each slide: show it in PowerPoint → say its explanation, sentence by sentence
-          → next slide … → "That's the end. Any questions?"
+    for each slide: (class: show it in PowerPoint) → say what it's about, sentence by sentence
+                  → if the idea is complex: draw it on the whiteboard, step by step, while talking
+                  → next slide … → closing line
 
-Raise hand (the Ask hotkey, the mic, or the Pause button) pauses Flick at once. When the
-question has been answered it says "Let's continue." and goes on from the sentence it was
-saying. Next / Previous / Stop work at any time.
+Raise hand (the Ask hotkey, the mic, the Pause button, or asking on the Study page) pauses at once.
+When the question has been answered Flick says "Let's continue." and goes on from the sentence it
+was saying. Next / Previous / Stop work at any time.
 
-Every change is published as a "present" event, which the answer card and the Presentation
-page show (slide, state, and the sentence being said as a caption).
+Events: "present" (slide, state, caption) and "canvas" (open / step / close the whiteboard).
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional
 
 from .models import Deck
@@ -29,23 +31,40 @@ State = Literal["idle", "starting", "presenting", "paused", "finished", "error"]
 QUESTION_WAIT_S = 30.0
 #: Breath between slides.
 SLIDE_GAP_S = 0.6
+#: After a slide was explained, how long to wait for a drawing that is still being planned.
+DRAWING_WAIT_S = 6.0
 
 GREETING = "Hello everyone."
-#: The first slide's explanation may already greet the room: then Flick doesn't greet twice.
-_GREETS = re.compile(r"^(hello|hi\b|hey\b|good (morning|afternoon|evening)|welcome|assalam|salam)")
+STUDY_GREETING = "Let's study this together."
 CONTINUE = "Now, let's continue."
 CLOSING = "That's the end of the presentation. Thank you for listening! Are there any questions?"
+STUDY_CLOSING = "That's the whole presentation. Well done! Ask me anything you'd like to go over again."
+DRAW_INTRO = {"story": "Let me draw this part of the story."}
+DRAW_INTRO_DEFAULT = "Let me draw this to make it clearer."
+#: The first slide's text may already greet the room: then Flick doesn't greet twice.
+_GREETS = re.compile(r"^(hello|hi\b|hey\b|good (morning|afternoon|evening)|welcome|assalam|salam)")
+
+
+@dataclass
+class _Segment:
+    """One sentence to say, and a whiteboard event to publish just before saying it."""
+
+    text: str
+    canvas: Optional[dict] = None
 
 
 class Presenter:
     def __init__(self, service: "FlickService"):
         self.service = service
         self.state: State = "idle"
+        self.style = "class"
+        self.study = False  # True: a student's study session (no PowerPoint, shown on the Study page)
         self.slide: Optional[int] = None
         self.total = 0
         self.line: Optional[str] = None
         self.message: Optional[str] = None
         self.paused_for: Optional[Literal["question", "manual"]] = None
+        self.canvas_id: Optional[str] = None
         self._deck: Optional[Deck] = None
         self._task: Optional[asyncio.Task] = None
         self._unpaused = asyncio.Event()
@@ -61,6 +80,11 @@ class Presenter:
     def active(self) -> bool:
         return self.state in ("starting", "presenting", "paused")
 
+    @property
+    def target(self) -> str:
+        """Where the whiteboard shows: the class (floating window) or the Study page."""
+        return "study" if self.study else "class"
+
     def status(self) -> dict:
         return {
             "state": self.state,
@@ -70,6 +94,9 @@ class Presenter:
             "paused_for": self.paused_for,
             "message": self.message,
             "deck": self._deck.name if self._deck else None,
+            "deck_id": self._deck.id if self._deck else None,
+            "style": self.style,
+            "study": self.study,
         }
 
     def _publish(self) -> None:
@@ -77,10 +104,12 @@ class Presenter:
 
     # ── Controls ────────────────────────────────────────────────────────────
 
-    def start(self, deck: Deck, from_slide: int = 1) -> None:
+    def start(self, deck: Deck, from_slide: int = 1, style: str = "class", study: bool = False) -> None:
         if self.active:
             return
         self._deck = deck
+        self.style = style
+        self.study = study
         self.total = len(deck.slides)
         self.slide = max(1, min(from_slide, self.total))
         self.line = None
@@ -100,6 +129,7 @@ class Presenter:
         self._cancel_question_timer()
         self._unpaused.set()
         self.service.speaker.stop()  # type: ignore[union-attr]
+        self._close_canvas()
         self.state = "idle"
         self.line = None
         self.paused_for = None
@@ -140,16 +170,21 @@ class Presenter:
             self.resume()
 
     async def question_answered(self) -> None:
-        """Called after a question was answered: continue once the answer has been said."""
+        """Called after a question was answered: continue once the answer (and any drawing) was said."""
         if self.state != "paused" or self.paused_for != "question":
             return
-        await self.service.speaker.idle()  # type: ignore[union-attr]
+        await self.service.wait_until_quiet()
         self.resume()
 
     def _cancel_question_timer(self) -> None:
         if self._question_timer is not None:
             self._question_timer.cancel()
             self._question_timer = None
+
+    def _close_canvas(self) -> None:
+        if self.canvas_id:
+            self.service.events.publish("canvas", {"action": "close", "id": self.canvas_id, "target": self.target})
+            self.canvas_id = None
 
     # ── The talk ────────────────────────────────────────────────────────────
 
@@ -166,30 +201,60 @@ class Presenter:
             await self._say(CONTINUE)
         self._just_resumed = False
 
+    async def _speak(self, segments: list[_Segment]) -> None:
+        """Says the segments in order; after a pause it repeats the sentence that was cut off."""
+        i = 0
+        while i < len(segments):
+            await self._wait_if_paused()
+            if self._stopped or self._jump is not None:
+                return
+            segment = segments[i]
+            if segment.canvas is not None:
+                if segment.canvas.get("action") == "open":
+                    self.canvas_id = segment.canvas["id"]
+                self.service.events.publish("canvas", segment.canvas)
+            if await self._say(segment.text):
+                i += 1
+
+    def _drawing_segments(self, drawing: dict, slide: int) -> list[_Segment]:
+        canvas_id = str(uuid.uuid4())
+        opened = {"action": "open", "id": canvas_id, "slide": slide, "target": self.target, **drawing}
+        segments = [_Segment(DRAW_INTRO.get(self.style, DRAW_INTRO_DEFAULT), opened)]
+        for number, step in enumerate(drawing["steps"], start=1):
+            event = {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": self.target}
+            for k, sentence in enumerate(split_sentences(step["say"])):
+                segments.append(_Segment(sentence, event if k == 0 else None))
+        return segments
+
     async def _run(self, deck: Deck, start: int) -> None:
         service = self.service
         try:
             n = start
-            await service.bridge.show_slide(n)
+            if not self.study:
+                await service.bridge.show_slide(n)
             self.state = "presenting"
-            if n == 1 and not _GREETS.match((await service.slide_explanation(deck, 1)).strip().lower()):
-                await self._say(GREETING)
+            first = True
             while n <= self.total and not self._stopped:
-                if self.slide != n:
+                if not self.study and self.slide != n:
                     await service.bridge.show_slide(n)
+                self._close_canvas()
                 self.slide = n
                 self._publish()
-                text = await service.slide_explanation(deck, n)
-                self._prefetch_next(deck, n + 1)
+
+                # What to say now; the drawing (if any) is planned meanwhile.
+                text, drawing_job = await service.slide_plan(deck, n, self.style)
+                service.prefetch_slide_plan(deck, n + 1, self.style)
                 sentences = split_sentences(text)
+                if first and n == 1 and not _GREETS.match(text.strip().lower()):
+                    sentences.insert(0, STUDY_GREETING if self.study else GREETING)
+                first = False
                 service.speaker.prefetch(sentences, urgent=True)  # type: ignore[union-attr]
-                i = 0
-                while i < len(sentences) and not self._stopped and self._jump is None:
-                    await self._wait_if_paused()
-                    if self._stopped or self._jump is not None:
-                        break
-                    if await self._say(sentences[i]):
-                        i += 1
+
+                await self._speak([_Segment(s) for s in sentences])
+                if not self._stopped and self._jump is None:
+                    drawing = await _result(drawing_job, DRAWING_WAIT_S)
+                    if drawing:
+                        await self._speak(self._drawing_segments(drawing, n))
                 if self._stopped:
                     return
                 if self._jump is not None:
@@ -200,7 +265,7 @@ class Presenter:
                     await asyncio.sleep(SLIDE_GAP_S)
             if not self._stopped:
                 await self._wait_if_paused()
-                await self._say(CLOSING)
+                await self._say(STUDY_CLOSING if self.study else CLOSING)
                 self.state = "finished"
                 self.line = None
                 self._publish()
@@ -209,15 +274,12 @@ class Presenter:
             self.message = f"Presenting stopped: {err}"
             self._publish()
 
-    def _prefetch_next(self, deck: Deck, n: int) -> None:
-        if n > self.total:
-            return
 
-        async def job() -> None:
-            try:
-                text = await self.service.slide_explanation(deck, n)
-                self.service.speaker.prefetch(split_sentences(text))  # type: ignore[union-attr]
-            except Exception:
-                pass
-
-        self.service._background(job())
+async def _result(job: "Optional[asyncio.Future]", timeout: float) -> Optional[dict]:
+    """The drawing if it is ready within `timeout`; otherwise skip it and go on with the talk."""
+    if job is None:
+        return None
+    try:
+        return await asyncio.wait_for(asyncio.shield(job), timeout)
+    except Exception:
+        return None

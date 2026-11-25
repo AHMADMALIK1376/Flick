@@ -18,6 +18,7 @@ AnswerOrigin = Literal[
     "explain",  # the presenter asked Flick to explain a slide to the audience
     "greeting",  # only "Flick" was said
     "error",
+    "example",  # Flick drew an example / a story on the whiteboard
 ]
 
 

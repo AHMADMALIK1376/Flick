@@ -28,6 +28,7 @@ from .events import EventBus
 from .llm import LLM, LLMError
 from .models import Answer, Deck, PredictedQuestion, PrepProgress
 from .powerpoint import PowerPointBridge
+from . import lessons
 from .presenter import Presenter
 from .pptx_reader import read_pptx
 from .semantic import Embedder, best_semantic_match, to_blob
@@ -37,6 +38,7 @@ from .text import (
     is_bare_address,
     is_nothing_heard,
     is_plain_explain_request,
+    parse_draw_request,
     parse_present_command,
     parse_slide_command,
 )
@@ -74,6 +76,9 @@ class FlickService:
         self.transcriber = transcriber
         self.speaker = speaker
         self.presenter = Presenter(self)
+        self._plans: dict[tuple[str, int, str], asyncio.Task] = {}  # slide plans being made
+        self._drawings: dict[tuple[str, int, str], asyncio.Task] = {}  # drawing decisions being made
+        self._narration: Optional[asyncio.Task] = None  # a drawing being explained on request
         self._preparing: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
 
@@ -284,6 +289,12 @@ class FlickService:
             self.presenter.pause("question")
         elif self.speaker:
             self.speaker.stop()
+
+        draw = parse_draw_request(question)
+        if draw:
+            drawn = await self._draw_on_request(draw, question, started)
+            if drawn:
+                return drawn  # otherwise: answer it in words below
 
         answer_id = str(uuid.uuid4())
         speak = self.db.get_settings().answer_mode == "speak"
@@ -507,8 +518,7 @@ class FlickService:
             self.db.save_explanations(deck.id, {number: text})
         return text
 
-    def start_presenting(self, from_slide: Optional[int] = None) -> dict:
-        deck = self.active_deck()
+    def _check_can_present(self, deck: Optional[Deck]) -> Deck:
         if deck is None or not deck.slides:
             raise UserError("Load your presentation first, so I know what to present.")
         if self.db.get_settings().voice != "natural":
@@ -518,9 +528,184 @@ class FlickService:
             if status["error"]:
                 raise UserError(status["error"])
             raise UserError("Flick's voice is still getting ready (first start only). Try again in a minute.")
-        self.speaker.stop()
-        self.presenter.start(deck, from_slide or 1)
+        return deck
+
+    def start_presenting(self, from_slide: Optional[int] = None, style: str = "class") -> dict:
+        """'Present for me': Flick gives the talk to the class, driving PowerPoint."""
+        deck = self._check_can_present(self.active_deck())
+        self.presenter.stop()
+        self.speaker.stop()  # type: ignore[union-attr]
+        self.presenter.start(deck, from_slide or 1, style=_style(style), study=False)
         return self.presenter.status()
+
+    def start_study(self, style: str, from_slide: Optional[int] = None, deck_id: Optional[str] = None) -> dict:
+        """A student's study session: Flick explains the deck in the chosen style (no PowerPoint)."""
+        if deck_id:
+            if self.db.get_deck(deck_id) is None:
+                raise UserError("That presentation is no longer in Flick.")
+            self.db.activate_deck(deck_id)
+        deck = self._check_can_present(self.active_deck())
+        self.presenter.stop()
+        self.speaker.stop()  # type: ignore[union-attr]
+        self.presenter.start(deck, from_slide or 1, style=_style(style), study=True)
+        return self.presenter.status()
+
+    # ── What Flick says per slide, and whether it draws ────────────────────
+
+    async def slide_plan(self, deck: Deck, number: int, style: str) -> tuple[str, "Optional[asyncio.Future]"]:
+        """→ (what to say for the slide, a future drawing or None). Cached per deck, slide and style."""
+        key = (deck.id, number, style)
+        task = self._plans.get(key)
+        if task is None or (task.done() and task.exception() is not None):
+            task = asyncio.ensure_future(self._make_plan(deck, number, style))
+            self._plans[key] = task
+        try:
+            text, drawing = await asyncio.shield(task)
+        except Exception:
+            self._plans.pop(key, None)
+            slide = next((s for s in deck.slides if s.number == number), None)
+            return (f"Let's look at {slide.title}." if slide and slide.title else ""), None
+        if style == "class":
+            return text, self._drawing_job(deck, number, style, text)
+        done: asyncio.Future = asyncio.get_running_loop().create_future()
+        done.set_result(drawing)
+        return text, done
+
+    async def _make_plan(self, deck: Deck, number: int, style: str) -> tuple[str, Optional[dict]]:
+        if style == "class":
+            return await self.slide_explanation(deck, number), None
+        cached = self.db.get_lesson(deck.id, number, style)
+        if cached is not None:
+            return cached, self.db.get_drawing(deck.id, number, style)[1]
+        previous = self.db.get_lesson(deck.id, number - 1, style)
+        raw = await self.llm.complete(
+            lessons.lesson_system(style), lessons.lesson_message(deck, number, previous), lessons.LESSON_MAX_TOKENS
+        )
+        text, drawing = lessons.parse_lesson(raw)
+        if not text:
+            raise LLMError("empty_response", "no lesson text")
+        self.db.save_lesson(deck.id, number, style, text)
+        self.db.save_drawing(deck.id, number, style, drawing)
+        return text, drawing
+
+    def _drawing_job(self, deck: Deck, number: int, style: str, text: str) -> "asyncio.Future":
+        """Decides (once, then cached) whether this slide needs a drawing, and plans it."""
+        decided, drawing = self.db.get_drawing(deck.id, number, style)
+        if decided:
+            done: asyncio.Future = asyncio.get_running_loop().create_future()
+            done.set_result(drawing)
+            return done
+        key = (deck.id, number, style)
+        task = self._drawings.get(key)
+        if task is None or (task.done() and task.exception() is not None):
+
+            async def decide() -> Optional[dict]:
+                slide = next((s for s in deck.slides if s.number == number), None)
+                raw = await self.llm.complete(
+                    lessons.draw_system(style, asked=False),
+                    lessons.draw_message(deck, slide, text, None),
+                    lessons.DRAW_MAX_TOKENS,
+                )
+                result = lessons.parse_drawing(raw)
+                self.db.save_drawing(deck.id, number, style, result)
+                return result
+
+            task = asyncio.ensure_future(decide())
+            self._drawings[key] = task
+        return task
+
+    def prefetch_slide_plan(self, deck: Deck, number: int, style: str) -> None:
+        """Gets the next slide ready (text, audio and drawing) while the current one is being said."""
+        if number > len(deck.slides):
+            return
+
+        async def job() -> None:
+            try:
+                text, drawing_job = await self.slide_plan(deck, number, style)
+                if self.speaker:
+                    self.speaker.prefetch(split_sentences(text))
+                if drawing_job is not None:
+                    await drawing_job
+            except Exception:
+                pass
+
+        self._background(job())
+
+    async def wait_until_quiet(self) -> None:
+        """Waits until Flick has finished saying (and drawing) its answer."""
+        if self._narration is not None and not self._narration.done():
+            try:
+                await self._narration
+            except Exception:
+                pass
+        if self.speaker:
+            await self.speaker.idle()
+
+    # ── "Draw this" / "give me an example" / "explain with a story" ─────────
+
+    async def _draw_on_request(self, kind: str, question: str, started: float) -> Optional[Answer]:
+        """Draws on the whiteboard and explains it step by step. None → answer in words instead."""
+        deck = self.active_deck()
+        if deck is None:
+            return None
+        presenting = self.presenter.active
+        number = self.presenter.slide if presenting else await self.bridge.current_slide()
+        slide = next((s for s in deck.slides if s.number == number), None) if number else None
+        style = "story" if kind == "story" else (self.presenter.style if presenting else "class")
+        context = None
+        if number:
+            context = self.db.get_lesson(deck.id, number, style) or self.db.get_explanation(deck.id, number)
+        answer_id = str(uuid.uuid4())
+        self.events.publish("thinking", {"id": answer_id, "question": question})
+        try:
+            raw = await self.llm.complete(
+                lessons.draw_system(style, asked=True),
+                lessons.draw_message(deck, slide, context, question),
+                lessons.DRAW_MAX_TOKENS,
+            )
+        except LLMError:
+            return None
+        drawing = lessons.parse_drawing(raw)
+        if drawing is None:
+            return None
+
+        target = self.presenter.target if presenting else "class"
+        study = presenting and self.presenter.study
+        speak = study or self.db.get_settings().answer_mode == "speak"
+        voiced = speak and self._natural_voice()
+        canvas_id = str(uuid.uuid4())
+        self.events.publish("canvas", {"action": "open", "id": canvas_id, "slide": number, "target": target, **drawing})
+        self._narration = asyncio.ensure_future(self._narrate(canvas_id, drawing, voiced, target, presenting))
+
+        answer = Answer(
+            id=answer_id,
+            question=question,
+            answer=" ".join(step["say"] for step in drawing["steps"]),
+            origin="example",
+            current_slide=number,
+            duration_ms=_ms_since(started),
+            timestamp=started,
+            speak=speak,
+            streamed=False,
+            voiced=voiced,
+        )
+        self.db.add_log(answer, deck.id)
+        self.events.publish("answer", answer.model_dump())
+        return answer
+
+    async def _narrate(self, canvas_id: str, drawing: dict, voiced: bool, target: str, close_after: bool) -> None:
+        """Reveals the drawing step by step while saying each step."""
+        for number, step in enumerate(drawing["steps"], start=1):
+            self.events.publish("canvas", {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": target})
+            if voiced:
+                for sentence in split_sentences(step["say"]):
+                    if can_voice(sentence) and not await self.speaker.say(sentence):  # type: ignore[union-attr]
+                        return  # stopped: a new question, or the talk moved on
+            else:
+                await asyncio.sleep(max(2.5, len(step["say"].split()) / 2.6))
+        if close_after:  # back to the talk: put the whiteboard away
+            await asyncio.sleep(1.5)
+            self.events.publish("canvas", {"action": "close", "id": canvas_id, "target": target})
 
     def _present_command(self, command: str, question: str, started: float) -> Answer:
         """Handles "present this", "stop presenting", "continue", "next / previous slide"."""
@@ -551,6 +736,10 @@ class FlickService:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+
+def _style(style: Optional[str]) -> str:
+    return style if style in lessons.STYLES else "class"
 
 
 def _ms_since(started: float) -> int:
