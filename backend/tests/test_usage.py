@@ -105,3 +105,18 @@ def test_usage_api(db):
         assert c.get(f"/usage/cards/{card}", headers=h).json()["totals"]["tokens"] == 15
         assert c.delete("/usage", headers=h).status_code == 204
         assert c.get("/usage", headers=h).json()["cards"] == []
+
+
+def test_three_models_to_choose_from_and_prices_match(db):
+    from flick.models import MODELS
+
+    service = make_service(db)
+    h = {"X-Flick-Token": "t"}
+    with TestClient(create_app(service, "t")) as c:
+        models = c.get("/models", headers=h).json()
+        assert [m["id"] for m in models] == ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
+        assert c.patch("/settings", headers=h, json={"model": "claude-opus-5-5"}).json()["model"] == "claude-opus-5-5"
+        assert c.patch("/settings", headers=h, json={"model": "gpt-5"}).status_code == 400
+    for m in MODELS:  # the price shown in the picker is the one the analyzer charges
+        p_in, p_out, _, _ = usage.PRICES[m["id"]]
+        assert m["price"] == f"${p_in:g} / ${p_out:g}".replace("$0.1 ", "$0.10 ").replace("$0.5", "$0.50")

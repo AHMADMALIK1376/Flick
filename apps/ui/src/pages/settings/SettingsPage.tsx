@@ -23,6 +23,7 @@ import { notifications } from '@mantine/notifications';
 import { IconCheck, IconPlugConnected, IconVolume } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../../api/flick';
+import { announceModel, MODEL_EVENT } from '../../layout/ModelPicker';
 import type { ModelOption, Settings, SettingsUpdate } from '../../api/types';
 import { PageHeader } from '../../components/PageHeader';
 import { colors } from '../../theme';
@@ -73,6 +74,17 @@ export function SettingsPage() {
       .catch((err) => notifications.show({ color: 'red', message: errorText(err) }));
   }, []);
 
+  // The model was changed from the sidebar: show it here too (and don't count it as unsaved).
+  useEffect(() => {
+    const onModel = (e: Event) => {
+      const model = (e as CustomEvent<string>).detail;
+      setSaved((s) => (s ? { ...s, model } : s));
+      setForm((f) => (f ? { ...f, model } : f));
+    };
+    window.addEventListener(MODEL_EVENT, onModel);
+    return () => window.removeEventListener(MODEL_EVENT, onModel);
+  }, []);
+
   const changes = useMemo<SettingsUpdate>(() => {
     if (!saved || !form) return {};
     const base = toForm(saved);
@@ -101,6 +113,7 @@ export function SettingsPage() {
     setSaving(true);
     try {
       const updated = await api.updateSettings(changes);
+      if (saved && updated.model !== saved.model) announceModel(updated.model);
       setSaved(updated);
       setForm(toForm(updated));
       setNewKey(updated.has_api_key ? null : '');
@@ -159,7 +172,7 @@ export function SettingsPage() {
           <Select
             size="md"
             label="Model"
-            data={models.map((m) => ({ value: m.id, label: m.name }))}
+            data={models.map((m) => ({ value: m.id, label: m.price ? `${m.name} · ${m.price} per million tokens` : m.name }))}
             value={form.model}
             onChange={(v) => v && set('model', v)}
             allowDeselect={false}

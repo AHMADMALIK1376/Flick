@@ -5,6 +5,7 @@ import { NavLink as RouterLink, Outlet, useLocation } from 'react-router-dom';
 import { colors } from '../theme';
 import { Logo } from './Logo';
 import { ConnectionStatus } from './ConnectionStatus';
+import { ModelPicker } from './ModelPicker';
 
 const NAV = [
   { to: '/presentation', label: 'Presentation', icon: IconPresentation },
@@ -41,11 +42,14 @@ export function AppLayout() {
               ))}
             </Stack>
           </Box>
-          <Box px="xs">
+          <Box>
+            <ModelPicker />
+            <Box px="xs">
             <ConnectionStatus />
             <Text size="xs" c={colors.muted} mt={6}>
               Flick v0.1
             </Text>
+            </Box>
           </Box>
         </Stack>
       </AppShell.Navbar>
