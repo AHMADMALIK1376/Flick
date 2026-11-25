@@ -1,6 +1,7 @@
 // Every backend endpoint as one typed function.
 // Full list with details: backend/README.md
 import { request } from './client';
+import { desktop } from '../desktop';
 import { connection } from './connection';
 import type {
   Answer,
@@ -33,6 +34,9 @@ export const api = {
   uploadDeck: (file: File) => {
     const form = new FormData();
     form.append('file', file);
+    // On the desktop, the file's real path lets "Present for me" open it in PowerPoint.
+    const path = desktop?.pathForFile?.(file);
+    if (path) form.append('path', path);
     return request<DeckSummary>('POST', '/decks/upload', form);
   },
   activateDeck: (id: string) => request<DeckSummary[]>('POST', `/decks/${id}/activate`),
@@ -74,6 +78,10 @@ export const api = {
   // ── Voice ──
   voices: () => request<ModelOption[]>('GET', '/voices'),
   voiceTest: () => request<void>('POST', '/voice/test'),
+  /** The Stop button: Flick goes quiet at once (a talk in progress is paused). */
+  voiceStop: () => request<void>('POST', '/voice/stop'),
+  /** The Speak button: say this text again in Flick's voice. */
+  voiceSay: (text: string) => request<void>('POST', '/voice/say', { text }),
 
   // ── Q&A log ──
   getLog: (limit = 300) => request<Answer[]>('GET', `/log?limit=${limit}`),

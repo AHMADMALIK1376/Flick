@@ -27,9 +27,9 @@ from .llm import LLMError
 from .models import MODELS, Answer, Deck, DeckSummary, PredictedQuestion, Settings, SettingsUpdate
 from .pptx_reader import PptxError
 from .service import FlickService, UserError
-from .transcribe import TranscriberUnavailable
+from .transcribe import AudioUnreadable, TranscriberUnavailable
 from .lessons import STYLES
-from .voice import VOICES
+from .voice import VOICES, split_sentences
 from .text import SlideTarget
 
 #: Largest .pptx accepted by upload.
@@ -55,6 +55,10 @@ class ExplainRequest(BaseModel):
 class PresentRequest(BaseModel):
     from_slide: Optional[int] = None  # None = from the first slide
     style: str = "class"  # class | story | professional | exam
+
+
+class SayRequest(BaseModel):
+    text: str
 
 
 class StudyRequest(BaseModel):
@@ -312,6 +316,8 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     @app.post("/present/stop", dependencies=auth)
     async def present_stop() -> dict:
         service.presenter.stop()
+        if service.speaker:
+            service.speaker.stop()  # also any answer or explanation still being spoken
         return service.presenter.status()
 
     # ── Voice ───────────────────────────────────────────────────────────────
@@ -319,6 +325,20 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     @app.get("/voices", dependencies=auth)
     def voices() -> list[dict]:
         return [{"id": v, "name": name} for v, name in VOICES]
+
+    @app.post("/voice/stop", dependencies=auth, status_code=204)
+    async def voice_stop():
+        """The Stop button: Flick goes quiet at once (a talk in progress is paused)."""
+        service.stop_talking()
+
+    @app.post("/voice/say", dependencies=auth, status_code=204)
+    async def voice_say(req: SayRequest):
+        """The Speak button: say this text again in Flick's voice."""
+        if not service.speaker or not service.speaker.available():
+            raise HTTPException(status_code=400, detail="Flick's voice is not ready yet.")
+        service.speaker.stop()
+        for sentence in split_sentences(req.text[:4000]):
+            service._say(sentence)
 
     @app.post("/voice/test", dependencies=auth, status_code=204)
     async def voice_test():
@@ -354,6 +374,8 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             text, ms = await service.transcribe(data)
         except (UserError, TranscriberUnavailable) as err:
             raise HTTPException(status_code=503, detail=str(err))
+        except AudioUnreadable:
+            raise HTTPException(status_code=400, detail="I couldn't hear that recording. Please try again.")
         return {"text": text, "duration_ms": ms}
 
     @app.post("/ask-audio", dependencies=auth)
@@ -364,6 +386,8 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             text, ms = await service.transcribe(data)
         except (UserError, TranscriberUnavailable) as err:
             raise HTTPException(status_code=503, detail=str(err))
+        except AudioUnreadable:
+            raise HTTPException(status_code=400, detail="I couldn't hear that recording. Please try again.")
         answer = await service.ask(text)
         return {"transcript": text, "transcribe_ms": ms, "answer": answer.model_dump() if answer else None}
 

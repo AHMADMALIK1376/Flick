@@ -152,7 +152,7 @@ def make_service(
         calls.append(kind)
         return slide_answer if kind == "slide" else None
 
-    def show(number):
+    def show(number, path=None, name=None):
         shown.append(number)
         return True
 

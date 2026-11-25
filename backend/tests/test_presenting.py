@@ -252,3 +252,109 @@ def test_raise_hand_through_the_api(db, tmp_path):
         status = c.get("/present", headers=token).json()
         assert status["state"] == "paused" and status["paused_for"] == "question"
         c.post("/present/stop", headers=token)
+
+
+# ── Stop really stops ───────────────────────────────────────────────────────
+
+
+class StreamThenStop(FakeLLM):
+    """Streams an answer; Stop is pressed after the first sentence."""
+
+    def __init__(self, service_ref, **kw):
+        super().__init__(**kw)
+        self.service_ref = service_ref
+
+    async def stream_search(self, system, message, max_tokens, max_searches, on_text, on_search):
+        await on_text("First sentence.")
+        self.service_ref[0].stop_talking()  # the Stop button on the card
+        await on_text("Second sentence.")
+        await on_text("Third sentence.")
+        return SearchResult("First sentence. Second sentence. Third sentence.", [], False)
+
+    async def stream_complete(self, system, message, max_tokens, on_text):
+        await on_text("First sentence.")
+        self.service_ref[0].stop_talking()
+        await on_text("Second sentence.")
+        return "First sentence. Second sentence."
+
+
+async def test_stop_silences_an_answer_that_is_still_streaming(db, tmp_path):
+    speaker = make_speaker(tmp_path)
+    ref = []
+    service = make_service(db, StreamThenStop(ref), speaker=speaker)
+    ref.append(service)
+    await load_deck(service)
+    await service.ask("Flick, what is attention?")
+    assert speaker.played_texts == ["First sentence."]  # nothing after Stop
+    speaker.close()
+
+
+async def test_stop_silences_a_live_explanation(db, tmp_path):
+    speaker = make_speaker(tmp_path)
+    ref = []
+    service = make_service(db, StreamThenStop(ref), speaker=speaker)
+    ref.append(service)
+    deck = await service.load_deck("/talks/X.pptx", data=make_pptx(["A", "B"]), prepare=False)  # no ready explanations
+    from flick.text import SlideTarget
+
+    await service.explain_slide(SlideTarget("number", 2, 0), "explain slide 2")
+    assert speaker.played_texts == ["First sentence."]
+    speaker.close()
+
+
+async def test_stop_then_start_runs_only_one_talk(db, tmp_path):
+    speaker = make_speaker(tmp_path)
+    service = make_service(db, speaker=speaker)
+    await load_deck(service)
+    service.start_presenting()
+    await wait_for(lambda: service.presenter.state == "presenting")
+    first = service.presenter._task
+    service.presenter.stop()
+    service.start_presenting()
+    await asyncio.sleep(0.05)
+    assert first.cancelled() or first.done()
+    service.presenter.stop()
+    speaker.close()
+
+
+def test_voice_stop_and_say_api(db, tmp_path):
+    speaker = make_speaker(tmp_path)
+    service = make_service(db, speaker=speaker)
+    h = {"X-Flick-Token": "t"}
+    with TestClient(create_app(service, "t")) as c:
+        assert c.post("/voice/say", headers=h, json={"text": "Hello there. How are you?"}).status_code == 204
+        assert c.post("/voice/stop", headers=h).status_code == 204
+    assert speaker.played_texts[:2] == ["Hello there.", "How are you?"]
+
+
+# ── PowerPoint follows the talk ─────────────────────────────────────────────
+
+
+def test_same_file_matches_path_or_name():
+    from flick.powerpoint import _same_file
+
+    assert _same_file(r"C:\Users\Ahmad\Talk.pptx", "C:/Users/Ahmad/Talk.pptx", "Talk.pptx")
+    assert _same_file(r"D:\Downloads\Talk.pptx", "upload/Talk.pptx", "Talk.pptx")
+    assert not _same_file(r"D:\Other.pptx", "upload/Talk.pptx", "Talk.pptx")
+
+
+async def test_show_slide_explains_what_to_do():
+    from flick.powerpoint import PowerPointBridge
+
+    bridge = PowerPointBridge(query=lambda k: None, platform="win32", show=lambda n, p, name: "protected")
+    problem = await bridge.show_slide(2, "upload/Talk.pptx", "Talk.pptx")
+    assert "Enable Editing" in problem and "Talk.pptx" in problem
+    ok = PowerPointBridge(query=lambda k: None, platform="win32", show=lambda n, p, name: "ok")
+    assert await ok.show_slide(2, None, None) is None
+
+
+async def test_presenter_reports_when_powerpoint_does_not_follow(db, tmp_path):
+    speaker = make_speaker(tmp_path)
+    service = make_service(db, speaker=speaker)
+    service.bridge._show = lambda n, p, name: "not_open"
+    await load_deck(service)
+    service.start_presenting()
+    await wait_for(lambda: service.presenter.status()["powerpoint"] is not None)
+    assert "isn't open in PowerPoint" in service.presenter.status()["powerpoint"]
+    service.presenter.stop()
+    speaker.close()

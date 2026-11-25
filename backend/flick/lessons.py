@@ -22,22 +22,23 @@ from typing import Any, Literal, Optional
 from .models import Deck, Slide
 from .prompts import format_slide
 
-Style = Literal["class", "story", "professional", "exam"]
+Style = Literal["class", "story", "professional", "exam", "visual"]
 STYLES: dict[str, str] = {
     "class": "Standard",
     "story": "Story mode",
     "professional": "Professional mode",
     "exam": "Exam mode",
+    "visual": "Visual mode",
 }
 
 #: Size of the whiteboard. Claude places things on this grid; the screen scales it.
 CANVAS_W, CANVAS_H = 1000, 600
 COLORS = ("plum", "aqua", "amber", "rose", "green", "gray")
-MAX_ELEMENTS = 18
-MAX_STEPS = 7
+MAX_ELEMENTS = 22
+MAX_STEPS = 8
 
-LESSON_MAX_TOKENS = 2600
-DRAW_MAX_TOKENS = 2000
+LESSON_MAX_TOKENS = 3200
+DRAW_MAX_TOKENS = 2600
 
 # ── Prompts ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,12 @@ correct technical terms (and say what each means in a few words), give one real-
 naturally: "First... Second..."), any definition they must know word-for-word, one memory trick (a mnemonic
 or a simple picture in the mind), and end with "A likely exam question:" followed by the question and a short
 model answer. Be brief and high-yield; skip anything that would not get marks.""",
+    "visual": """VISUAL MODE. The whole presentation is explained through examples drawn on the whiteboard. For every
+slide, pick ONE concrete daily-life example that makes the idea obvious (a chai dhaba, a cricket team, a bank
+queue, a WhatsApp group, a university canteen, a rickshaw ride) and draw it. The drawing does the teaching:
+its steps carry the explanation. What you say before the drawing is only a short lead-in (1-2 sentences,
+25-45 words) that names the idea and the example, e.g. "Encryption is like passing a note in a secret code.
+Let me draw it." The last step names the idea in one plain sentence.""",
 }
 
 LESSON_SYSTEM = """You are Flick, a friendly tutor helping a university student study a presentation, one
@@ -69,7 +76,7 @@ Rules:
 - Use only what the slide supports plus well-known general knowledge. If the slide is only a title,
   agenda or thank-you slide, say one short natural sentence and move on.
 
-Then decide whether a small whiteboard drawing would REALLY help this slide (see the drawing rules).
+{draw_when}
 
 Reply with ONLY this JSON:
 {{"text": "...", "drawing": <drawing object or null>}}
@@ -80,7 +87,10 @@ DRAW_RULES = f"""Drawing rules (the whiteboard is {CANVAS_W} x {CANVAS_H}, origi
 - Draw ONLY when the idea is complex or abstract: a process or flow, how parts relate, a comparison,
   cause and effect, a structure, something that is hard to picture. Do NOT draw for a title, agenda,
   summary, thank-you slide, or a simple list. When in doubt, don't draw (use null).
-- A drawing is a small, clear picture, like a teacher sketching on a whiteboard: 4-14 elements.
+- A drawing is a clear, lively scene, like a good teacher sketching on a whiteboard: 8-18 elements.
+  Make it CONCRETE: real people and things as emoji (👩‍🎓 🧑‍🍳 🏦 📱 🍵 🛺 🏏) with short labels, not just
+  boxes with words. Use boxes and circles for the parts of a system, arrows (with a verb label: "sends",
+  "asks", "pays") for what moves between them, and a few small text notes for key numbers or rules.
 - Element types:
   {{"id":"a","type":"box","x":120,"y":220,"w":200,"h":90,"label":"Database","emoji":"🗄️","color":"plum","step":1}}
   {{"id":"b","type":"circle","x":600,"y":260,"r":60,"label":"User","emoji":"🙂","color":"aqua","step":2}}
@@ -88,12 +98,15 @@ DRAW_RULES = f"""Drawing rules (the whiteboard is {CANVAS_W} x {CANVAS_H}, origi
   {{"type":"arrow","from":"a","to":"b","label":"sends data","step":3}}  (from/to are element ids)
   {{"type":"text","x":500,"y":560,"text":"Only your own rows!","size":30,"color":"rose","step":4}}
   box x,y = top-left corner; circle and emoji x,y = centre; text x,y = centre of the text.
-- Colours: {", ".join(COLORS)}. Labels: at most 4 words. Keep everything 40px inside the edges,
-  leave at least 60px between shapes, no overlaps. Spread the picture across the board, left to right
-  or top to bottom, in the order things happen.
-- "steps": 3-6 steps. Step 1 shows the first elements, each next step adds more (every element has the
-  step number when it appears). Each step has "say": 1-2 short spoken sentences describing what is being
-  drawn right now ("Here's Ali at the bank counter..."). In story style the drawing shows the story's scene.
+- Colours: {", ".join(COLORS)} (use 2-4 of them, the same colour for things of the same kind).
+  Labels: at most 4 words. Keep everything 40px inside the edges, leave at least 60px between shapes,
+  no overlaps. Use the whole board: spread the scene left to right (or top to bottom) in the order
+  things happen; a title row is not needed (the title is shown above the board).
+- "steps": 4-7 steps. Step 1 sets the scene, each next step adds the next part (every element has the
+  step number when it appears). Each step has "say": 1-2 short spoken sentences about what is being
+  drawn right now ("Here's Ali at the bank counter..."). The LAST step adds one text element at the bottom
+  (y about 550) with the takeaway in a few words, and its "say" states the idea plainly.
+  In story style the drawing shows the story's scene.
 - Drawing object: {{"title":"Short title","elements":[...],"steps":[{{"say":"..."}}, ...]}}"""
 
 DRAW_SYSTEM = """You are Flick, a friendly AI presenter with a whiteboard. Plan ONE small drawing that explains
@@ -113,6 +126,9 @@ _WHEN_ASKED = """Someone ASKED for this ("draw it", "give an example", "explain 
 Answer their request: if they asked about something specific, draw that. If they asked for an example or a story,
 the drawing is a concrete daily-life example or a short story scene."""
 
+_WHEN_VISUAL = """Visual mode: always draw a concrete example, unless the slide is only a title, agenda or thank-you
+slide (then reply {"drawing": null})."""
+
 _CLASS_GUIDE = """STANDARD STYLE. Clear and friendly, like a good teacher explaining to the class, with a simple
 everyday example."""
 
@@ -121,12 +137,20 @@ def style_guide(style: str) -> str:
     return _STYLE_GUIDE.get(style, _CLASS_GUIDE)
 
 
+_LESSON_DRAW_WHEN = "Then decide whether a whiteboard drawing would REALLY help this slide (see the drawing rules)."
+_LESSON_DRAW_VISUAL = """Then ALWAYS make the drawing (visual mode), except for a pure title, agenda or thank-you slide
+(drawing null). In visual mode the "Draw ONLY when..." rule below does not apply: every content slide gets its
+example drawn. "text" is only the short lead-in (25-45 words)."""
+
+
 def lesson_system(style: str) -> str:
-    return LESSON_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES)
+    when = _LESSON_DRAW_VISUAL if style == "visual" else _LESSON_DRAW_WHEN
+    return LESSON_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, draw_when=when)
 
 
 def draw_system(style: str, asked: bool) -> str:
-    return DRAW_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, when=_WHEN_ASKED if asked else _WHEN_AUTO)
+    when = _WHEN_ASKED if asked else _WHEN_VISUAL if style == "visual" else _WHEN_AUTO
+    return DRAW_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, when=when)
 
 
 def lesson_message(deck: Deck, number: int, previous_text: Optional[str]) -> str:

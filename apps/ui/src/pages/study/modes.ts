@@ -1,6 +1,6 @@
-// The three ways Flick can explain a deck to a student.
+// The four ways Flick can explain a deck to a student.
 export interface StudyMode {
-  id: 'story' | 'professional' | 'exam';
+  id: 'story' | 'professional' | 'exam' | 'visual';
   emoji: string;
   name: string;
   tagline: string;
@@ -28,6 +28,13 @@ export const STUDY_MODES: StudyMode[] = [
     name: 'Exam mode',
     tagline: 'Only what gets marks',
     text: 'Key points, definitions, a memory trick, and a likely exam question with a short model answer per slide.',
+  },
+  {
+    id: 'visual',
+    emoji: '✏️',
+    name: 'Visual mode',
+    tagline: 'Every idea, drawn',
+    text: 'Each slide is explained with a real-life example that Flick draws step by step on a full-screen whiteboard.',
   },
 ];
 

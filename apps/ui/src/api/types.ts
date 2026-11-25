@@ -126,10 +126,12 @@ export interface PresentStatus {
   message: string | null;
   deck: string | null;
   deck_id: string | null;
-  /** class (the normal talk) | story | professional | exam */
+  /** class (the normal talk) | story | professional | exam | visual */
   style: string;
   /** true: a student's study session (no PowerPoint, shown on the Study page) */
   study: boolean;
+  /** Why PowerPoint isn't following the talk, and what to do (null when it is). */
+  powerpoint?: string | null;
 }
 
 // ── The whiteboard ──────────────────────────────────────────────────────────

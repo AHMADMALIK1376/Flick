@@ -299,6 +299,7 @@ class FlickService:
         answer_id = str(uuid.uuid4())
         speak = self.db.get_settings().answer_mode == "speak"
         voice_on = speak and self._natural_voice()
+        epoch = self.speech_epoch()
         voiced_any = False
         self.events.publish("thinking", {"id": answer_id, "question": question})
         deck = self.active_deck()
@@ -308,14 +309,14 @@ class FlickService:
         async def on_text(sentence: str) -> None:
             nonlocal streamed, voiced_any
             streamed = True
-            voiced = voice_on and self._say(sentence)
+            voiced = voice_on and self._say(sentence, epoch)
             voiced_any = voiced_any or voiced
             self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": speak, "voiced": voiced})
 
         async def on_search() -> None:
             # "One moment, let me check" — only if nothing has been said yet.
             say_it = speak and not streamed
-            voiced = say_it and voice_on and self._say(ONE_MOMENT)
+            voiced = say_it and voice_on and self._say(ONE_MOMENT, epoch)
             self.events.publish("searching", {"id": answer_id, "speak": say_it, "voiced": voiced})
 
         try:
@@ -337,7 +338,7 @@ class FlickService:
             )
         except LLMError as err:
             answer = self._error(question, _friendly(err), current_slide, started, answer_id)
-        return self._finish(answer, deck, voice=voice_on)
+        return self._finish(answer, deck, voice=voice_on, epoch=epoch)
 
     async def explain_slide(
         self, target: SlideTarget = SlideTarget("current"), request: str = "Explain this slide to the audience."
@@ -382,6 +383,7 @@ class FlickService:
         voice_on = self._natural_voice()
         if self.speaker and not self.presenter.active:
             self.speaker.stop()
+        epoch = self.speech_epoch()
         if ready:
             return self._finish(
                 Answer(
@@ -396,6 +398,7 @@ class FlickService:
                 ),
                 deck,
                 voice=voice_on,
+                epoch=epoch,
             )
 
         # Not ready yet, or a special request ("in Urdu", "in simple words"): write it now, streamed.
@@ -407,7 +410,7 @@ class FlickService:
         async def on_text(sentence: str) -> None:
             nonlocal streamed, voiced_any
             streamed = True
-            voiced = voice_on and self._say(sentence)
+            voiced = voice_on and self._say(sentence, epoch)
             voiced_any = voiced_any or voiced
             self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": True, "voiced": voiced})
 
@@ -430,6 +433,7 @@ class FlickService:
             ),
             deck,
             voice=voice_on,
+            epoch=epoch,
         )
 
     # ── Internals ───────────────────────────────────────────────────────────
@@ -454,7 +458,7 @@ class FlickService:
             speak=False,
         )
 
-    def _finish(self, answer: Answer, deck: Optional[Deck], voice: bool = False) -> Answer:
+    def _finish(self, answer: Answer, deck: Optional[Deck], voice: bool = False, epoch: Optional[int] = None) -> Answer:
         # Prepared answers and ready explanations arrive whole: say them now (never errors).
         if (
             voice
@@ -463,9 +467,10 @@ class FlickService:
             and answer.origin not in ("error", "greeting")
             and can_voice(answer.answer)
         ):
-            for sentence in split_sentences(answer.answer):
-                self._say(sentence)
-            answer.voiced = True
+            if epoch is None or self.speaker is None or epoch == self.speaker.epoch:
+                for sentence in split_sentences(answer.answer):
+                    self._say(sentence)
+                answer.voiced = True
         self.db.add_log(answer, deck.id if deck else None)
         self.events.publish("answer", answer.model_dump())
         return answer
@@ -476,12 +481,26 @@ class FlickService:
         """Flick's own voice is on and loaded (otherwise the screens use the Windows voice)."""
         return bool(self.speaker and self.speaker.available() and self.db.get_settings().voice == "natural")
 
-    def _say(self, text: str) -> bool:
-        """Queues a sentence in Flick's voice. False if this text can't be voiced (e.g. Urdu script)."""
+    def _say(self, text: str, epoch: Optional[int] = None) -> bool:
+        """Queues a sentence in Flick's voice. False if this text can't be voiced (e.g. Urdu script),
+        or if Stop was pressed since this answer started (`epoch` changed)."""
         if not self.speaker or not can_voice(text):
+            return False
+        if epoch is not None and epoch != self.speaker.epoch:
             return False
         self.speaker.say(text)
         return True
+
+    def speech_epoch(self) -> int:
+        return self.speaker.epoch if self.speaker else 0
+
+    def stop_talking(self) -> None:
+        """The Stop button: silence at once (answer, explanation or drawing). A talk in
+        progress is paused, not ended."""
+        if self.presenter.state in ("presenting", "starting"):
+            self.presenter.pause("manual")
+        if self.speaker:
+            self.speaker.stop()
 
     def voice_status(self) -> dict:
         voice = getattr(self.speaker, "voice", None)
@@ -721,6 +740,8 @@ class FlickService:
                 self.start_presenting()
             elif command == "stop":
                 self.presenter.stop()
+                if self.speaker:
+                    self.speaker.stop()
             elif command == "continue":
                 self.presenter.resume()
             else:

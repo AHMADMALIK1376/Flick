@@ -70,38 +70,93 @@ def _com_query(kind: str) -> Optional[str]:
         pythoncom.CoUninitialize()
 
 
-def _com_show_slide(number: int) -> bool:
-    """Runs in a worker thread. Shows slide `number` full screen, starting the slide show if needed."""
+#: Why a slide could not be shown (codes → what to tell the presenter).
+SHOW_PROBLEMS = {
+    "no_powerpoint": "PowerPoint isn't open. Open {name} in PowerPoint and Flick will move the slides.",
+    "not_open": "{name} isn't open in PowerPoint. Open it there and Flick will move the slides.",
+    "protected": 'PowerPoint opened {name} in Protected View. Click "Enable Editing" in PowerPoint so Flick can move the slides.',
+    "error": "Flick couldn't move PowerPoint's slides. Start the slide show in PowerPoint and try again.",
+}
+
+
+def _same_file(full_name: object, path: Optional[str], name: Optional[str]) -> bool:
+    """Is PowerPoint's file (FullName) the deck Flick is presenting? Same path, or else same file name."""
+    full = str(full_name or "").replace("/", "\\").lower()
+    if path and full == path.replace("/", "\\").lower():
+        return True
+    return bool(name) and full.rsplit("\\", 1)[-1] == str(name).lower()
+
+
+def _com_show_slide(number: int, path: Optional[str] = None, name: Optional[str] = None) -> str:
+    """
+    Runs in a worker thread. Shows slide `number` full screen in the deck's slide show → "ok" or a
+    SHOW_PROBLEMS code. Finds the deck's slide show, or its open window (starting the slide show),
+    leaves Protected View if needed, or opens the file itself (read-only) if it has a real path.
+    """
+    import os
+
     import pythoncom  # type: ignore
     import win32com.client  # type: ignore
 
     pythoncom.CoInitialize()
     try:
+        can_open = bool(path) and os.path.isabs(path) and os.path.exists(path)  # type: ignore[arg-type]
         try:
             app = win32com.client.GetActiveObject("PowerPoint.Application")
         except Exception:
-            return False
+            if not can_open:
+                return "no_powerpoint"
+            app = win32com.client.Dispatch("PowerPoint.Application")
+        matches = lambda pres: not (path or name) or _same_file(pres.FullName, path, name)  # noqa: E731
         try:
-            if app.SlideShowWindows.Count:
-                view = app.SlideShowWindows(1).View
-            elif app.Presentations.Count:
-                view = app.ActivePresentation.SlideShowSettings.Run().View
-            else:
-                return False
-            view.GotoSlide(number)
-            return True
+            # 1. Its slide show is already running.
+            for i in range(1, app.SlideShowWindows.Count + 1):
+                window = app.SlideShowWindows(i)
+                if matches(window.Presentation):
+                    window.View.GotoSlide(number)
+                    return "ok"
+            # 2. It is open for editing: start its slide show.
+            pres = next(
+                (app.Presentations(i) for i in range(1, app.Presentations.Count + 1) if matches(app.Presentations(i))),
+                None,
+            )
+            # 3. It is in Protected View (downloaded files): leave it.
+            if pres is None:
+                for i in range(1, app.ProtectedViewWindows.Count + 1):
+                    window = app.ProtectedViewWindows(i)
+                    if matches(window.Presentation):
+                        try:
+                            pres = window.Edit()
+                        except Exception:
+                            return "protected"
+                        break
+            # 4. Not open: open it ourselves (read-only, Flick never edits it).
+            if pres is None:
+                if not can_open:
+                    return "not_open"
+                pres = app.Presentations.Open(path, True, False, True)  # ReadOnly, Untitled, WithWindow
+            show = pres.SlideShowSettings.Run()
+            show.View.GotoSlide(number)
+            try:
+                show.Activate()
+            except Exception:
+                pass
+            return "ok"
         except Exception:
-            return False
+            return "error"
     finally:
         pythoncom.CoUninitialize()
 
 
 def _ps_show_slide(number: int) -> str:
-    return _ATTACH + rf"""
-if ($pp.SlideShowWindows.Count -gt 0) {{ $v = $pp.SlideShowWindows.Item(1).View }}
-elseif ($pp.Presentations.Count -gt 0) {{ $v = $pp.ActivePresentation.SlideShowSettings.Run().View }}
-else {{ exit 0 }}
-$v.GotoSlide({int(number)}); 'ok'
+    return _ATTACH.replace("exit 0", "'no_powerpoint'; exit 0") + rf"""
+try {{
+  if ($pp.SlideShowWindows.Count -gt 0) {{ $v = $pp.SlideShowWindows.Item(1).View }}
+  elseif ($pp.Presentations.Count -gt 0) {{ $v = $pp.ActivePresentation.SlideShowSettings.Run().View }}
+  elseif ($pp.ProtectedViewWindows.Count -gt 0) {{ $v = $pp.ProtectedViewWindows.Item(1).Edit().SlideShowSettings.Run().View }}
+  else {{ 'not_open'; exit 0 }}
+  $v.GotoSlide({int(number)}); 'ok'
+}} catch {{ 'error' }}
 """
 
 
@@ -135,7 +190,7 @@ class PowerPointBridge:
         query: Optional[Callable[[str], Optional[str]]] = None,
         platform: str = sys.platform,
         clock: Callable[[], float] = time.monotonic,
-        show: Optional[Callable[[int], bool]] = None,
+        show: Optional[Callable[..., object]] = None,
     ):
         self.supported = platform == "win32"
         if query is not None:
@@ -146,11 +201,11 @@ class PowerPointBridge:
             self._query = lambda kind: _powershell(_PS_SLIDE if kind == "slide" else _PS_PATH)
         self._clock = clock
         if show is not None:
-            self._show: Callable[[int], bool] = show
+            self._show: Callable[..., object] = show
         elif self.supported and _has_pywin32():
             self._show = _com_show_slide
         else:
-            self._show = lambda n: _powershell(_ps_show_slide(n)) == "ok"
+            self._show = lambda n, path=None, name=None: _powershell(_ps_show_slide(n)) or "no_powerpoint"
         self._cached: Optional[tuple[Optional[int], float]] = None
         self._in_flight: Optional[asyncio.Task] = None
 
@@ -170,14 +225,22 @@ class PowerPointBridge:
         self._in_flight = asyncio.ensure_future(self._read_slide())
         return await asyncio.shield(self._in_flight)
 
-    async def show_slide(self, number: int) -> bool:
-        """Shows slide `number` in the slide show (starting it if needed). False if PowerPoint isn't there."""
+    async def show_slide(self, number: int, path: Optional[str] = None, name: Optional[str] = None) -> Optional[str]:
+        """
+        Shows slide `number` of this deck in PowerPoint's slide show (starting it if needed).
+        → None when it worked, else a sentence for the presenter saying what to do.
+        """
         if not self.supported:
-            return False
-        ok = await asyncio.to_thread(self._show, number)
-        if ok:
+            return None
+        try:
+            result = await asyncio.to_thread(self._show, number, path, name)
+        except Exception:
+            result = "error"
+        if result is True or result == "ok":
             self._cached = (number, self._clock())
-        return ok
+            return None
+        code = result if isinstance(result, str) and result in SHOW_PROBLEMS else "error"
+        return SHOW_PROBLEMS[code].format(name=name or "your presentation")
 
     async def active_presentation_path(self) -> Optional[str]:
         if not self.supported:

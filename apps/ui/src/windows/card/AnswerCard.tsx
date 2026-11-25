@@ -248,11 +248,13 @@ function Body({ state, hotkey }: { state: CardState; hotkey: string }) {
 
 function speak(text: string) {
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  // Flick's own voice first; the system voice only if it is not ready.
+  api.voiceSay(text).catch(() => window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)));
 }
 
 function stop() {
   window.speechSynthesis.cancel();
+  api.voiceStop().catch(() => undefined); // backend voice: answers, explanations and talks
 }
 
 function Footer({ state }: { state: CardState }) {

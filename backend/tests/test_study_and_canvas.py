@@ -212,8 +212,29 @@ def test_study_api(db, tmp_path):
     h = {"X-Flick-Token": "t"}
     with TestClient(create_app(service, "t")) as c:
         deck_id = c.post("/decks/upload", headers=h, files={"file": ("Talk.pptx", make_pptx(["A", "B"]))}).json()["id"]
-        assert {s["id"] for s in c.get("/styles", headers=h).json()} == {"class", "story", "professional", "exam"}
+        assert {s["id"] for s in c.get("/styles", headers=h).json()} == {"class", "story", "professional", "exam", "visual"}
         r = c.post("/study/start", headers=h, json={"style": "exam", "deck_id": deck_id})
         assert r.status_code == 200 and r.json()["study"] and r.json()["style"] == "exam"
         assert c.post("/present/stop", headers=h).json()["state"] == "idle"
         assert c.post("/study/start", headers=h, json={"deck_id": "nope"}).status_code == 400
+
+
+def test_visual_mode_always_draws():
+    from flick import lessons
+
+    assert lessons.STYLES["visual"] == "Visual mode"
+    assert "ALWAYS make the drawing" in lessons.lesson_system("visual")
+    assert "ALWAYS make the drawing" not in lessons.lesson_system("story")
+    assert "always draw a concrete example" in lessons.draw_system("visual", asked=False)
+    assert "Decide first" in lessons.draw_system("class", asked=False)
+
+
+def test_study_api_accepts_visual_mode(db):
+    from fastapi.testclient import TestClient
+
+    from flick.api import create_app
+
+    service = make_service(db)
+    with TestClient(create_app(service, "t")) as c:
+        styles = c.get("/styles", headers={"X-Flick-Token": "t"}).json()
+    assert any((s.get("id") if isinstance(s, dict) else s) == "visual" for s in styles)

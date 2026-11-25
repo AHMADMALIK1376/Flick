@@ -90,6 +90,11 @@ export function createMic(ui: UiSource, backend: BackendInfo): BrowserWindow {
   return win;
 }
 
+/** The whole screen the slide show is on (the primary one). */
+export function canvasBounds(): Electron.Rectangle {
+  return { ...screen.getPrimaryDisplay().bounds };
+}
+
 export function createCanvas(ui: UiSource, backend: BackendInfo): BrowserWindow {
   const { workArea } = screen.getPrimaryDisplay();
   const width = Math.min(1080, workArea.width - 80);
