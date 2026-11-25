@@ -11,7 +11,8 @@ export type AnswerOrigin =
   | 'general' // no deck loaded, no search needed
   | 'explain' // "Flick, explain this slide"
   | 'greeting' // only "Flick" was said
-  | 'error';
+  | 'error'
+  | 'example'; // Flick drew an example / a story on the whiteboard
 
 export interface Slide {
   number: number;
@@ -124,7 +125,35 @@ export interface PresentStatus {
   paused_for: 'question' | 'manual' | null;
   message: string | null;
   deck: string | null;
+  deck_id: string | null;
+  /** class (the normal talk) | story | professional | exam */
+  style: string;
+  /** true: a student's study session (no PowerPoint, shown on the Study page) */
+  study: boolean;
 }
+
+// ── The whiteboard ──────────────────────────────────────────────────────────
+
+export type InkColor = 'plum' | 'aqua' | 'amber' | 'rose' | 'green' | 'gray';
+
+export type DrawingElement =
+  | { id: string; type: 'box'; step: number; x: number; y: number; w: number; h: number; label: string; emoji: string; color: InkColor }
+  | { id: string; type: 'circle'; step: number; x: number; y: number; r: number; label: string; emoji: string; color: InkColor }
+  | { id: string; type: 'emoji'; step: number; x: number; y: number; char: string; size: number; label: string }
+  | { id: string; type: 'text'; step: number; x: number; y: number; text: string; size: number; color: InkColor }
+  | { type: 'arrow'; step: number; from: string; to: string; label: string; dashed: boolean };
+
+/** A drawing planned by Claude: a 1000 × 600 board, revealed step by step. */
+export interface Drawing {
+  title: string;
+  elements: DrawingElement[];
+  steps: { say: string }[];
+}
+
+export type CanvasEvent =
+  | ({ action: 'open'; id: string; slide: number | null; target: 'class' | 'study' } & Drawing)
+  | { action: 'step'; id: string; step: number; say: string; target: 'class' | 'study' }
+  | { action: 'close'; id: string; target: 'class' | 'study' };
 
 export interface AskAudioResult {
   transcript: string;
@@ -142,6 +171,7 @@ export interface FlickEventMap {
   answer: Answer; // the final answer
   prep_progress: PrepProgress; // preparing a deck
   present: PresentStatus; // presenting: slide, state, caption
+  canvas: CanvasEvent; // the whiteboard: open a drawing, show the next step, close
 }
 
 export type FlickEventType = keyof FlickEventMap;

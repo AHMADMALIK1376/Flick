@@ -1,6 +1,6 @@
 // "Present for me": Flick gives the whole talk, slide by slide, in its own voice.
 // Idle: a big start button. While presenting: live slide, caption and controls.
-import { Badge, Box, Button, Card, Group, NumberInput, Progress, Stack, Text } from '@mantine/core';
+import { Badge, Box, Button, Card, Group, NumberInput, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
 import { IconPlayerPlay, IconSpeakerphone } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { Deck, Status } from '../../api/types';
@@ -17,6 +17,7 @@ interface Props {
 
 export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
   const [fromSlide, setFromSlide] = useState<number>(1);
+  const [style, setStyle] = useState('class');
   const { status, active } = presenter;
 
   if (active) {
@@ -73,8 +74,8 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
         </Badge>
       </Group>
       <Text fz={14} c="#e6e2f0" mt={8} lh={1.55}>
-        Flick runs the slide show and explains every slide to the class, with examples, in its own voice. Questions in
-        the middle? It pauses, answers, and carries on.
+        Flick runs the slide show and explains every slide to the class in its own voice, drawing on a whiteboard when
+        an idea is hard to picture. Questions in the middle? It pauses, answers, and carries on.
       </Text>
       {status.state === 'finished' && (
         <Text fz={13} c={colors.aquaButton} fw={600} mt={10}>
@@ -86,13 +87,27 @@ export function PresentForMeCard({ deck, presenter, voice, askHotkey }: Props) {
           {status.message}
         </Text>
       )}
-      <Group gap={10} mt={18} align="flex-end">
+      <SegmentedControl
+        mt={16}
+        value={style}
+        onChange={setStyle}
+        radius="md"
+        data={[
+          { value: 'class', label: 'Standard' },
+          { value: 'story', label: '📖 Story' },
+          { value: 'professional', label: '💼 Professional' },
+          { value: 'exam', label: '🎯 Exam' },
+        ]}
+        styles={{ root: { background: 'rgba(255,255,255,0.14)' }, label: { color: '#fff' }, indicator: { background: 'rgba(255,255,255,0.28)' } }}
+        aria-label="How Flick explains"
+      />
+      <Group gap={10} mt={14} align="flex-end">
         <Button
           size="lg"
           leftSection={<IconPlayerPlay size={20} />}
           loading={presenter.busy}
           disabled={!voiceReady}
-          onClick={() => presenter.start(fromSlide)}
+          onClick={() => presenter.start(fromSlide, style)}
         >
           Present for me
         </Button>

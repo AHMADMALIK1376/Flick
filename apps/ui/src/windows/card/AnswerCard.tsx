@@ -37,7 +37,11 @@ export function AnswerCard() {
 
   useAutoSpeak();
   const presenter = usePresenter();
-  const presenting = presenter.active;
+  // A student's study session shows on the Study page: the floating card stays out of it.
+  const studying = presenter.active && presenter.status.study;
+  const presenting = presenter.active && !presenter.status.study;
+  const studyingRef = useRef(studying);
+  studyingRef.current = studying;
 
   // Back to the talk after a question: show the presenting view again.
   const lastPresentState = useRef(presenter.status.state);
@@ -53,11 +57,11 @@ export function AnswerCard() {
     else desktop?.showCard();
   }, [state.phase, presenting]);
 
-  useFlickEvent('thinking', (d) => dispatch({ type: 'thinking', id: d.id, question: d.question }));
-  useFlickEvent('searching', (d) => dispatch({ type: 'searching', id: d.id }));
-  useFlickEvent('answer_delta', (d) => dispatch({ type: 'delta', id: d.id, text: d.text }));
+  useFlickEvent('thinking', (d) => !studyingRef.current && dispatch({ type: 'thinking', id: d.id, question: d.question }));
+  useFlickEvent('searching', (d) => !studyingRef.current && dispatch({ type: 'searching', id: d.id }));
+  useFlickEvent('answer_delta', (d) => !studyingRef.current && dispatch({ type: 'delta', id: d.id, text: d.text }));
   useFlickEvent('answer', (a) => {
-    if (a.origin !== 'greeting') dispatch({ type: 'answer', answer: a });
+    if (a.origin !== 'greeting' && !studyingRef.current) dispatch({ type: 'answer', answer: a });
   });
 
   // Go back to "waiting" 20 s after a normal answer, unless the mouse is on the card.

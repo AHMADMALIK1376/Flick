@@ -3,6 +3,7 @@
  *   dashboard  #/          main window with the sidebar
  *   card       #/card      floating answer card, above the PowerPoint slide show
  *   mic        #/mic       small floating mic button
+ *   canvas     #/canvas    Flick's whiteboard, over the slide show, when it draws for the class
  *   presenter  #/presenter compact view for a second screen
  */
 import { BrowserWindow, screen } from 'electron';
@@ -86,6 +87,25 @@ export function createMic(ui: UiSource, backend: BackendInfo): BrowserWindow {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   load(win, ui, backend, 'mic');
+  return win;
+}
+
+export function createCanvas(ui: UiSource, backend: BackendInfo): BrowserWindow {
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = Math.min(1080, workArea.width - 80);
+  const height = Math.min(700, workArea.height - 80);
+  const win = new BrowserWindow(
+    floating({
+      width,
+      height,
+      x: workArea.x + Math.round((workArea.width - width) / 2),
+      y: workArea.y + Math.round((workArea.height - height) / 2),
+      resizable: true,
+    }),
+  );
+  win.setAlwaysOnTop(true, 'screen-saver'); // over the slide show
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  load(win, ui, backend, 'canvas');
   return win;
 }
 

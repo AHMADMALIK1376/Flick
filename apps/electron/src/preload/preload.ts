@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld('flick', {
   /** Card window: show or hide the floating card. */
   showCard: () => ipcRenderer.send('flick:show-card'),
   hideCard: () => ipcRenderer.send('flick:hide-card'),
+  /** Whiteboard window: show or hide it. */
+  showCanvas: () => ipcRenderer.send('flick:show-canvas'),
+  hideCanvas: () => ipcRenderer.send('flick:hide-canvas'),
 });

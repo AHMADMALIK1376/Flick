@@ -14,6 +14,9 @@ const IDLE: PresentStatus = {
   paused_for: null,
   message: null,
   deck: null,
+  deck_id: null,
+  style: 'class',
+  study: false,
 };
 
 export function usePresenter() {
@@ -45,7 +48,9 @@ export function usePresenter() {
     status,
     active,
     busy,
-    start: (fromSlide?: number) => run(() => api.presentStart(fromSlide)),
+    start: (fromSlide?: number, style?: string) => run(() => api.presentStart(fromSlide, style)),
+    startStudy: (style: string, deckId?: string, fromSlide?: number) =>
+      run(() => api.studyStart(style, deckId, fromSlide)),
     pause: () => run(api.presentPause),
     resume: () => run(api.presentResume),
     next: () => run(api.presentNext),

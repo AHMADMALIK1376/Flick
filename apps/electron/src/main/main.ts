@@ -19,7 +19,7 @@ import { Hotkeys } from './hotkeys';
 import { safeError, safeLog } from './logging';
 import { Backend, BackendInfo, launchPlan } from './sidecar';
 import { createTray } from './tray';
-import { createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
+import { createCanvas, createCard, createDashboard, createMic, createPresenter, UiSource } from './windows';
 
 const SETTINGS_SYNC_MS = 3000;
 const DEV_UI_URL = 'http://127.0.0.1:5173';
@@ -33,6 +33,7 @@ let info: BackendInfo | null = null;
 let ui: UiSource | null = null;
 let dashboard: BrowserWindow | null = null;
 let card: BrowserWindow | null = null;
+let canvas: BrowserWindow | null = null;
 let mic: BrowserWindow | null = null;
 let presenter: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -129,6 +130,13 @@ function showCard(): void {
 
 ipcMain.on('flick:show-card', showCard);
 ipcMain.on('flick:hide-card', () => card?.hide());
+ipcMain.on('flick:show-canvas', () => {
+  if (!canvas || canvas.isDestroyed()) return;
+  if (!canvas.isVisible()) canvas.showInactive(); // don't take focus from PowerPoint
+  canvas.setAlwaysOnTop(true, 'screen-saver');
+  canvas.moveTop();
+});
+ipcMain.on('flick:hide-canvas', () => canvas?.hide());
 ipcMain.on('flick:listening', (_event, listening: boolean) => {
   if (!card || card.isDestroyed()) return;
   card.webContents.send('flick:listening', listening);
@@ -178,6 +186,7 @@ async function start(): Promise<void> {
   client = new BackendClient(info);
 
   card = createCard(ui, info);
+  canvas = createCanvas(ui, info);
   mic = createMic(ui, info);
   dashboard = createDashboard(ui, info, iconPath);
   keepOpenUntilQuit(dashboard);

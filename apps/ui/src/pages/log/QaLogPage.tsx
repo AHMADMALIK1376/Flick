@@ -19,6 +19,7 @@ const FILTERS: { label: string; value: string; origins: AnswerOrigin[] | null }[
   { label: 'Slides', value: 'slides', origins: ['slides'] },
   { label: 'Web', value: 'web', origins: ['web'] },
   { label: 'Explain', value: 'explain', origins: ['explain'] },
+  { label: 'Examples', value: 'example', origins: ['example'] },
   { label: 'Problems', value: 'error', origins: ['error'] },
 ];
 
