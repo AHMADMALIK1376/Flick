@@ -29,7 +29,7 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
   const [working, setWorking] = useState<string | null>(null);
   const [last, setLast] = useState<Answer | null>(null);
   const mic = useAskFlow();
-  const mode = STUDY_MODES.find((m) => m.id === status.style);
+  const mode = STUDY_MODES.find((m) => m.id === status.style.split('+')[0]);
 
   useEffect(() => {
     if (!status.deck_id) return;

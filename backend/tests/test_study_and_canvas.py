@@ -225,8 +225,47 @@ def test_visual_mode_always_draws():
     assert lessons.STYLES["visual"] == "Visual mode"
     assert "ALWAYS make the drawing" in lessons.lesson_system("visual")
     assert "ALWAYS make the drawing" not in lessons.lesson_system("story")
-    assert "always draw a concrete example" in lessons.draw_system("visual", asked=False)
+    assert "Always draw" in lessons.draw_system("visual", asked=False)
     assert "Decide first" in lessons.draw_system("class", asked=False)
+
+
+def test_whiteboard_option_inside_every_mode():
+    from flick import lessons
+    from flick.service import _style
+
+    assert _style("story", "example") == "story+example"
+    assert _style("class", "draw") == "class+draw"
+    assert _style("exam", "auto") == "exam"
+    assert _style("visual", "draw") == "visual"  # visual mode always draws examples anyway
+    assert _style("nonsense", "nonsense") == "class"
+    assert lessons.split_style("professional+draw") == ("professional", "draw")
+    # The mode's own guide stays, plus the board note; and drawing is no longer optional.
+    system = lessons.lesson_system("story+example")
+    assert "STORY MODE" in system and "daily-life example" in system and "ALWAYS make the drawing" in system
+    assert "Always draw" in lessons.draw_system("class+draw", asked=False)
+    assert "Decide first" in lessons.draw_system("story", asked=False)
+
+
+async def test_standard_mode_with_draw_every_slide_asks_for_a_drawing_each_slide(db, tmp_path):
+    systems = []
+
+    def reply(system, message):
+        systems.append(system)
+        return '{"drawing": null}'
+
+    speaker = make_speaker(tmp_path)
+    service = make_service(db, FakeLLM(complete_text=reply), speaker=speaker)
+    deck = await service.load_deck("/talks/X.pptx", data=make_pptx(["A", "B"]), prepare=False)
+    service.db.save_explanations(deck.id, {1: "One.", 2: "Two."})
+    status = service.start_presenting(style="class", board="draw")
+    assert status["style"] == "class+draw"
+    for _ in range(200):
+        if service.presenter.state == "finished":
+            break
+        await asyncio.sleep(0.05)
+    draws = [s for s in systems if "Always draw" in s]
+    assert len(draws) == 2  # one drawing per slide, the prepared explanations are still used
+    speaker.close()
 
 
 def test_study_api_accepts_visual_mode(db):

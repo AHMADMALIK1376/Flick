@@ -2,7 +2,8 @@
 import { Badge, Box, Button, Card, Group, NumberInput, Radio, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconPlayerPlay, IconUpload } from '@tabler/icons-react';
 import { useState } from 'react';
-import type { DeckSummary, Status } from '../../api/types';
+import type { Board, DeckSummary, Status } from '../../api/types';
+import { BoardPicker } from '../../components/BoardPicker';
 import type { Presenter } from '../../hooks/usePresenter';
 import { colors } from '../../theme';
 import { pickFile } from '../presentation/EmptyState';
@@ -33,6 +34,7 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
   const active = decks.find((d) => d.active);
   const [deckId, setDeckId] = useState<string | null>(active?.id ?? decks[0]?.id ?? null);
   const [mode, setMode] = useState<string>('story');
+  const [board, setBoard] = useState<Board>('auto');
   const [fromSlide, setFromSlide] = useState(1);
   const loader = useDeckLoader(onDecksChanged);
   const chosen = decks.find((d) => d.id === deckId) ?? null;
@@ -118,9 +120,9 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
             })}
           </SimpleGrid>
         </Radio.Group>
-        <Text fz={12.5} c={colors.muted} mt={12}>
-          In every mode, Flick draws on its whiteboard when an idea is hard to picture, and you can stop it any time to
-          ask a question.
+        <BoardPicker value={board} onChange={setBoard} style={mode} />
+        <Text fz={12.5} c={colors.muted} mt={10}>
+          You can stop Flick any time to ask a question, or say “go back to slide 3 and draw it”.
         </Text>
       </Card>
 
@@ -132,7 +134,7 @@ export function StudySetup({ decks, presenter, voice, onDecksChanged }: Props) {
             leftSection={<IconPlayerPlay size={20} />}
             disabled={!chosen || !voiceReady}
             loading={presenter.busy}
-            onClick={() => chosen && presenter.startStudy(mode, chosen.id, fromSlide)}
+            onClick={() => chosen && presenter.startStudy(mode, chosen.id, fromSlide, board)}
           >
             Start studying
           </Button>

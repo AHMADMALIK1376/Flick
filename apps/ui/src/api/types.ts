@@ -122,6 +122,9 @@ export interface Status {
 export type PresentState = 'idle' | 'starting' | 'presenting' | 'paused' | 'finished' | 'error';
 
 /** "Present for me": Flick gives the whole talk. */
+/** The whiteboard option inside every mode. */
+export type Board = 'auto' | 'draw' | 'example';
+
 export interface PresentStatus {
   state: PresentState;
   slide: number | null;
