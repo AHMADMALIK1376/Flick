@@ -274,6 +274,11 @@ class Speaker:
     def close(self) -> None:
         self._closed = True
         self.stop()
+        if self._worker is not None and not self._worker.done():
+            try:
+                self._worker.cancel()
+            except RuntimeError:
+                pass  # its event loop is already closed
         self._urgent.shutdown(wait=False, cancel_futures=True)
         self._spare.shutdown(wait=False, cancel_futures=True)
 
@@ -344,8 +349,11 @@ class Speaker:
             try:
                 clip = await item.clip
             except asyncio.CancelledError:
-                if not item.clip.cancelled():
-                    raise  # the speaker itself is shutting down
+                # Two very different cancellations land here: Stop cancelled this sentence's audio
+                # (skip it), or the speaker itself is shutting down (must end, or shutdown hangs).
+                task = asyncio.current_task()
+                if self._closed or (task is not None and task.cancelling()) or not item.clip.cancelled():
+                    raise
                 clip = None
             except Exception:
                 clip = None  # could not make this sentence: skip it

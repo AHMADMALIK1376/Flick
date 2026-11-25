@@ -36,7 +36,7 @@ async def test_explain_uses_slide_and_neighbours_without_search():
     llm = FakeLLM(complete_text="EXPLAINED")
     assert await engine.explain_slide(llm, DECK, 2, "explain this slide") == "EXPLAINED"
     system, message = llm.complete_calls[0]
-    assert "examples" in system
+    assert "example" in system and "HOW FLICK TALKS" in system
     assert "<slide_to_explain>\nSlide 2: Dropout" in message
     assert "previous slide 1: Neural Networks" in message and "next slide 3: Summary" in message
     assert not llm.search_calls

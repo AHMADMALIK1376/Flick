@@ -20,7 +20,7 @@ import re
 from typing import Any, Literal, Optional
 
 from .models import Deck, Slide
-from .prompts import format_slide
+from .prompts import AUDIENCE_CLASS, AUDIENCE_STUDY, TEACHER_VOICE, format_slide
 
 Style = Literal["class", "story", "professional", "exam", "visual"]
 STYLES: dict[str, str] = {
@@ -43,17 +43,21 @@ DRAW_MAX_TOKENS = 2600
 # ── Prompts ─────────────────────────────────────────────────────────────────
 
 _STYLE_GUIDE = {
-    "story": """STORY MODE. Teach through one continuing story. Use the same small cast across the whole deck
-(e.g. Ali and Sara, two university students in Lahore, their teacher Ms. Ayesha, a chai dhaba, a cricket
-match, a family business). Each slide is the next scene of the story, and the scene makes the slide's idea
-obvious; then say plainly, in one sentence, what the idea is. Keep it warm and vivid, not childish.""",
-    "professional": """PROFESSIONAL MODE. Precise and concise, like a senior engineer briefing a colleague. Use the
-correct technical terms (and say what each means in a few words), give one real-world industry example
-(a bank, an app, a hospital, a company like Daraz or Careem), and mention a common pitfall if there is one.""",
-    "exam": """EXAM MODE. The student has an exam soon. Give: the key points to remember (short, numbered, said
-naturally: "First... Second..."), any definition they must know word-for-word, one memory trick (a mnemonic
-or a simple picture in the mind), and end with "A likely exam question:" followed by the question and a short
-model answer. Be brief and high-yield; skip anything that would not get marks.""",
+    "story": """STORY MODE. Teach through one continuing story, told the way a good storyteller talks, not read.
+Use the same small cast across the whole deck (e.g. Ali and Sara, two university students in Lahore, their
+teacher Ms. Ayesha, a chai dhaba, a cricket match, a family business). Each slide is the next scene: show a
+moment with a little tension ("Ali is sure his marks are private... until Sara sees them on her screen"),
+let the scene make the idea obvious, then step out of the story and say plainly what the idea is.
+Warm and vivid, never childish.""",
+    "professional": """PROFESSIONAL MODE. Like a senior engineer explaining to a sharp new colleague over coffee:
+precise, but still a person talking. Use the correct technical terms (and say what each means in a few words),
+give one real-world industry example (a bank, an app, a hospital, a company like Daraz or Careem), and mention
+the mistake people commonly make with it ("the classic mistake here is...").""",
+    "exam": """EXAM MODE. Like a senior who topped this course helping a friend the night before the exam:
+focused, quick, encouraging. Say the two or three points that actually get marks ("First... second..."),
+any definition they must know word-for-word ("write this exactly:"), one memory trick that's easy to picture,
+and end with "A likely exam question:" plus the question and a short model answer. Skip anything that would
+not get marks.""",
     "visual": """VISUAL MODE. The whole presentation is explained through examples drawn on the whiteboard. For every
 slide, pick ONE concrete daily-life example that makes the idea obvious (a chai dhaba, a cricket team, a bank
 queue, a WhatsApp group, a university canteen, a rickshaw ride) and draw it. The drawing does the teaching:
@@ -62,19 +66,23 @@ its steps carry the explanation. What you say before the drawing is only a short
 Let me draw it." The last step names the idea in one plain sentence.""",
 }
 
-LESSON_SYSTEM = """You are Flick, a friendly tutor helping a university student study a presentation, one
-slide at a time. You are given the slide, the slides around it and (if any) what you said for the previous
-slide. Write what Flick SAYS for this slide, in the requested style.
+LESSON_SYSTEM = """You are Flick, explaining a presentation out loud, one slide at a time. You are given the slide,
+the slides around it and (if any) what you said for the previous slide. Write what Flick SAYS for this slide,
+in the requested style.
+
+{voice}
+
+{audience}
 
 {style_guide}
 
 Rules:
-- Short: about 60-110 words. It is spoken aloud.
-- Plain, natural spoken English (Pakistani students; Roman Urdu words are fine if the deck uses them).
-  No markdown, no bullet symbols, no headings, no emojis.
-- Continue naturally from the previous slide; do not greet again after slide 1. Never say "this slide".
-- Use only what the slide supports plus well-known general knowledge. If the slide is only a title,
-  agenda or thank-you slide, say one short natural sentence and move on.
+- About 70-130 words (under a minute of speech); shorter for a simple slide. Spoken English that Pakistani
+  students find natural (a Roman Urdu word is fine if the deck uses them).
+- Slide 1: open warmly in your own words, with a reason to care about the topic. After slide 1 never greet again;
+  continue from what you said last time, with a fresh link each time (never the same one twice in a row).
+- Use only what the slide supports plus well-known general knowledge. If the slide is only a title, agenda or
+  thank-you slide, say one or two short natural sentences and move on.
 
 {draw_when}
 
@@ -103,15 +111,17 @@ DRAW_RULES = f"""Drawing rules (the whiteboard is {CANVAS_W} x {CANVAS_H}, origi
   no overlaps. Use the whole board: spread the scene left to right (or top to bottom) in the order
   things happen; a title row is not needed (the title is shown above the board).
 - "steps": 4-7 steps. Step 1 sets the scene, each next step adds the next part (every element has the
-  step number when it appears). Each step has "say": 1-2 short spoken sentences about what is being
-  drawn right now ("Here's Ali at the bank counter..."). The LAST step adds one text element at the bottom
-  (y about 550) with the takeaway in a few words, and its "say" states the idea plainly.
+  step number when it appears). Each step has "say": 1-2 short spoken sentences, said like a teacher
+  sketching on the board while talking: "Okay, so here's Ali, standing at the bank counter." / "Now watch
+  what happens when he asks for Sara's balance..." / "See this arrow? That's the request going in."
+  Never describe the drawing mechanically ("A box labelled X appears"). The LAST step adds one text element
+  at the bottom (y about 550) with the takeaway in a few words, and its "say" lands the idea plainly.
   In story style the drawing shows the story's scene.
 - Drawing object: {{"title":"Short title","elements":[...],"steps":[{{"say":"..."}}, ...]}}"""
 
-DRAW_SYSTEM = """You are Flick, a friendly AI presenter with a whiteboard. Plan ONE small drawing that explains
-an idea from a presentation slide, in the requested style. The drawing is revealed step by step while Flick
-says each step's sentence.
+DRAW_SYSTEM = """You are Flick, a teacher with a whiteboard, the kind students remember because the drawings
+make things click. Plan ONE drawing that explains an idea from a presentation slide, in the requested style.
+The drawing is revealed step by step while Flick talks through each step, like sketching live in class.
 
 {style_guide}
 
@@ -149,11 +159,16 @@ obvious (a chai dhaba, a cricket team, a bank queue, a WhatsApp group, a univers
 
 def split_style(style: str) -> tuple[str, str]:
     """ "story+example" → ("story", "example"); "exam" → ("exam", "auto"). Visual mode always draws examples."""
-    base, _, board = (style or "class").partition("+")
+    base, _, board = (style or "class").split("@")[0].partition("+")
     base = base if base in STYLES else "class"
     if base == "visual":
         return base, "example"
     return base, board if board in _BOARD_GUIDE else "auto"
+
+
+def is_study(plan_key: str) -> bool:
+    """Plans for a study session (one student) are written and saved apart from class talks: "story+draw@study"."""
+    return (plan_key or "").endswith("@study")
 
 
 def base_style(style: str) -> str:
@@ -186,9 +201,16 @@ The "Draw ONLY when..." rule below does not apply here: every content slide gets
 In visual mode "text" is only the short lead-in (25-45 words); in other styles keep the style's length."""
 
 
-def lesson_system(style: str) -> str:
+def lesson_system(style: str, study: bool = True) -> str:
+    """study: one student on the Study page (a friend explaining); else the whole class (a teacher)."""
     when = _LESSON_DRAW_VISUAL if always_draws(style) else _LESSON_DRAW_WHEN
-    return LESSON_SYSTEM.format(style_guide=style_guide(style), draw_rules=DRAW_RULES, draw_when=when)
+    return LESSON_SYSTEM.format(
+        voice=TEACHER_VOICE,
+        audience=AUDIENCE_STUDY if study else AUDIENCE_CLASS,
+        style_guide=style_guide(style),
+        draw_rules=DRAW_RULES,
+        draw_when=when,
+    )
 
 
 def draw_system(style: str, asked: bool) -> str:

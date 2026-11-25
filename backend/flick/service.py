@@ -23,7 +23,7 @@ from typing import Optional
 
 import numpy as np
 
-from . import engine, usage
+from . import engine, prompts, usage
 from .db import Database
 from .events import EventBus
 from .llm import LLM, LLMError
@@ -50,7 +50,14 @@ from .transcribe import Transcriber
 from .voice import Speaker, can_voice, split_sentences
 
 #: Said while Flick searches the web, so the room isn't silent.
-ONE_MOMENT = "One moment, let me check."
+#: Said while Flick searches the web, so the room isn't left in silence. Rotates.
+ONE_MOMENTS = [
+    "One moment, let me check.",
+    "Hmm, let me look that up quickly.",
+    "Good one. Give me a second to check.",
+    "Let me just check that for you.",
+]
+ONE_MOMENT = ONE_MOMENTS[0]
 #: Earlier questions given to Claude so follow-ups ("explain that again") make sense.
 RECENT_FOR_CONTEXT = 3
 #: Older questions are a different conversation, not context.
@@ -97,6 +104,8 @@ class FlickService:
         if hasattr(llm, "meter") and getattr(llm, "meter", None) is None:
             llm.meter = self.usage  # type: ignore[attr-defined]
         self.presenter = Presenter(self)
+        #: Flick's voice changed since these decks were prepared: their explanations were reset.
+        self.voice_refreshed = db.refresh_spoken_text(prompts.VOICE_VERSION)
         self._plans: dict[tuple[str, int, str], asyncio.Task] = {}  # slide plans being made
         self._drawings: dict[tuple[str, int, str], asyncio.Task] = {}  # drawing decisions being made
         self._narration: Optional[asyncio.Task] = None  # a drawing being explained on request
@@ -117,7 +126,28 @@ class FlickService:
             jobs.append(self._load_embedder_and_index())
         if self.speaker:
             jobs.append(self._load_voice())
+        if self.voice_refreshed:
+            jobs.append(self.rewrite_explanations())
         await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def rewrite_explanations(self, deck_id: Optional[str] = None) -> int:
+        """Writes the active deck's slide explanations again (in Flick's current voice), so the
+        next talk starts at once. Prepared questions are kept. → how many slides were written."""
+        deck = self.db.get_deck(deck_id) if deck_id else self.active_deck()
+        if deck is None or not deck.slides or not self.db.get_settings().anthropic_api_key:
+            return 0
+
+        async def save(batch: dict[int, str]) -> None:
+            self.db.save_explanations(deck.id, batch)
+
+        card = usage.LazyCard("prep", f"Rewriting {deck.name} in Flick's new voice", deck_id=deck.id, deck_name=deck.name)
+        try:
+            with usage.tagged(kind="prep", card=card, deck_id=deck.id):
+                found = await engine.prepare_explanations(self.llm, deck.name, deck.slides, save)
+        except Exception:
+            return 0
+        self._prevoice(deck.id)
+        return len(found)
 
     async def _load_voice(self) -> None:
         await asyncio.to_thread(self.speaker.voice.load)  # type: ignore[union-attr]
@@ -362,7 +392,8 @@ class FlickService:
         async def on_search() -> None:
             # "One moment, let me check" — only if nothing has been said yet.
             say_it = speak and not streamed
-            voiced = say_it and voice_on and self._say(ONE_MOMENT, epoch)
+            self._moments = getattr(self, "_moments", -1) + 1
+            voiced = say_it and voice_on and self._say(ONE_MOMENTS[self._moments % len(ONE_MOMENTS)], epoch)
             self.events.publish("searching", {"id": answer_id, "speak": say_it, "voiced": voiced})
 
         try:
@@ -663,7 +694,9 @@ class FlickService:
         previous = self.db.get_lesson(deck.id, number - 1, style)
         with usage.tagged(kind="talk", sink=[]) as tag:
             raw = await self.llm.complete(
-                lessons.lesson_system(style), lessons.lesson_message(deck, number, previous), lessons.LESSON_MAX_TOKENS
+                lessons.lesson_system(style, study=lessons.is_study(style)),
+                lessons.lesson_message(deck, number, previous),
+                lessons.LESSON_MAX_TOKENS,
             )
         text, drawing = lessons.parse_lesson(raw)
         if drawing and text:
@@ -828,6 +861,29 @@ class FlickService:
                 await self.bridge.show_slide(back, deck.file_path, deck.name)
         except Exception:
             pass
+
+    def fresh_explanation(self, deck: Deck, number: int, plan_key: str, request: Optional[str]) -> "asyncio.Future":
+        """ "Explain slide 6 again": a teacher doesn't repeat themselves word for word. A new
+        explanation, simpler and with a different example, written while Flick says "Sure, let's go back"."""
+        old = self.db.get_lesson(deck.id, number, plan_key) or self.db.get_explanation(deck.id, number) or ""
+        base = lessons.base_style(plan_key)
+        ask = (
+            f'Someone asked to go over this again ("{request or "explain it again"}"). Explain it again in a '
+            "DIFFERENT way: simpler, starting from the part that usually confuses people, with a new example or "
+            "analogy. About 70 to 140 words. Don't open with a greeting or with \"sure\" (Flick already said it)."
+        )
+        if old:
+            ask += f' Last time you said: "{old[:1200]}". Do not reuse those sentences or that example.'
+        if base != "class":
+            ask += f" Keep the {lessons.STYLES[base]} style."
+        if lessons.is_study(plan_key):
+            ask += " You are talking to one student, like a friend sitting next to them."
+
+        async def make() -> str:
+            return await engine.explain_slide(self.llm, deck, number, ask)
+
+        with usage.tagged(kind="explain", slide=number, style=plan_key, deck_id=deck.id):
+            return asyncio.ensure_future(make())
 
     def requested_drawing(self, deck: Deck, number: int, style: str, board: str, request: Optional[str]) -> "asyncio.Future":
         """A drawing someone asked for during the talk ("...and draw it", "...with an example")."""
