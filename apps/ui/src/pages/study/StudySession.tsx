@@ -1,7 +1,7 @@
 // A study session: the slide, what Flick is saying, its whiteboard, and asking questions.
 import { ActionIcon, Badge, Box, Button, Card, Group, Loader, Progress, SimpleGrid, Stack, Text, TextInput, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconMaximize, IconMicrophone, IconPlayerStop, IconSend } from '@tabler/icons-react';
+import { IconMaximize, IconMicrophone, IconPencil, IconPlayerStop, IconSchool, IconSend } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../api/flick';
 import type { Answer, Deck } from '../../api/types';
@@ -16,6 +16,7 @@ import { colors } from '../../theme';
 import { AskPanel } from '../../windows/mic/AskPanel';
 import { useAskFlow } from '../../windows/mic/useAskFlow';
 import { QUICK_ASKS, STUDY_MODES } from './modes';
+import { IconTile } from '../../components/IconTile';
 
 export function StudySession({ presenter }: { presenter: Presenter }) {
   const { status } = presenter;
@@ -70,9 +71,7 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
       <Card p="16px 20px">
         <Group justify="space-between" wrap="nowrap">
           <Group gap={12} wrap="nowrap" style={{ minWidth: 0 }}>
-            <Text fz={30} lh={1}>
-              {mode?.emoji ?? '📚'}
-            </Text>
+            <IconTile icon={mode?.icon ?? IconSchool} size={40} />
             <Stack gap={2} style={{ minWidth: 0 }}>
               <Group gap={8}>
                 <Text fz={16} fw={800} c={colors.ink} truncate>
@@ -163,8 +162,10 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
             </>
           ) : (
             <Box p={30} style={{ background: '#fffdf8', borderRadius: 14, border: `1px dashed ${colors.border}`, textAlign: 'center' }}>
-              <Text fz={40}>✏️</Text>
-              <Text fz={15} fw={700} c={colors.ink} mt={6}>
+              <Box style={{ display: 'flex', justifyContent: 'center' }}>
+                <IconTile icon={IconPencil} size={48} />
+              </Box>
+              <Text fz={15} fw={700} c={colors.ink} mt={10}>
                 Flick’s whiteboard
               </Text>
               <Text fz={13} c={colors.muted} mt={4} maw={320} mx="auto">
@@ -211,7 +212,7 @@ export function StudySession({ presenter }: { presenter: Presenter }) {
         <Group gap={8} mt={12}>
           {QUICK_ASKS.map((q) => (
             <Button key={q.label} variant="default" size="xs" radius="xl" disabled={asking} onClick={() => ask(q.ask)}>
-              {q.emoji} {q.label}
+              {q.label}
             </Button>
           ))}
         </Group>

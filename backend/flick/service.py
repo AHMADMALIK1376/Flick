@@ -58,6 +58,11 @@ ONE_MOMENTS = [
     "Let me just check that for you.",
 ]
 ONE_MOMENT = ONE_MOMENTS[0]
+ONE_MOMENTS_BY_LANGUAGE = {
+    "en": ONE_MOMENTS,
+    "ur": ["ایک منٹ، ذرا دیکھ لیتے ہیں۔", "اچھا سوال ہے، ایک لمحہ۔", "ذرا چیک کر لیتے ہیں۔"],
+    "mix": ["One second، ذرا check کر لیتے ہیں۔", "Good question، ایک minute۔", "اچھا، ایک second، یہ check کرتے ہیں۔"],
+}
 #: Earlier questions given to Claude so follow-ups ("explain that again") make sense.
 RECENT_FOR_CONTEXT = 3
 #: Older questions are a different conversation, not context.
@@ -393,12 +398,14 @@ class FlickService:
             # "One moment, let me check" — only if nothing has been said yet.
             say_it = speak and not streamed
             self._moments = getattr(self, "_moments", -1) + 1
-            voiced = say_it and voice_on and self._say(ONE_MOMENTS[self._moments % len(ONE_MOMENTS)], epoch)
+            moments = ONE_MOMENTS_BY_LANGUAGE.get(self.talk_language()[0], ONE_MOMENTS)
+            voiced = say_it and voice_on and self._say(moments[self._moments % len(moments)], epoch)
             self.events.publish("searching", {"id": answer_id, "speak": say_it, "voiced": voiced})
 
         try:
             result = await engine.answer_question(
-                self.llm, question, deck, current_slide, self._recent(), self._semantic_match, on_text, on_search
+                self.llm, question, deck, current_slide, self._recent(), self._semantic_match, on_text, on_search,
+                *self.talk_language(),
             )
             answer = Answer(
                 id=answer_id,
@@ -465,7 +472,9 @@ class FlickService:
         answer_id = str(uuid.uuid4())
 
         # Written before the talk: starts at once.
-        ready = self.db.get_explanation(deck.id, number) if is_plain_explain_request(request) else None
+        language, female = self.talk_language()
+        # (Explanations written before the talk are English.)
+        ready = self.db.get_explanation(deck.id, number) if is_plain_explain_request(request) and language == "en" else None
         voice_on = self._natural_voice()
         if self.speaker and not self.presenter.active:
             self.speaker.stop()
@@ -501,7 +510,7 @@ class FlickService:
             self.events.publish("answer_delta", {"id": answer_id, "text": sentence, "speak": True, "voiced": voiced})
 
         try:
-            text = await engine.explain_slide(self.llm, deck, number, request, on_text)
+            text = await engine.explain_slide(self.llm, deck, number, request, on_text, language, female)
         except LLMError as err:
             return self._finish(self._error(label, _friendly(err), number, started, answer_id), deck)
         return self._finish(
@@ -577,6 +586,11 @@ class FlickService:
         self.speaker.say(text)
         return True
 
+    def talk_language(self) -> tuple[str, bool]:
+        """(the language Flick talks in: en | ur | mix, whether the Urdu voice is a woman's)."""
+        settings = self.db.get_settings()
+        return settings.talk_language, not settings.urdu_voice.startswith("hm")
+
     def usage_card(self, type: str, title: str, deck: Optional[Deck], key: Optional[str] = None) -> "str | usage.LazyCard | None":
         """The Token Analyzer card a call belongs to: the running talk's, or a new one."""
         if self.presenter.active and self.presenter.usage_card:
@@ -605,8 +619,8 @@ class FlickService:
     def _prevoice(self, deck_id: str) -> None:
         """Makes audio ahead of time, so it plays at once: every slide explanation first
         (presenting), then every prepared answer (questions). Uses the spare queue only."""
-        if not self._natural_voice():
-            return
+        if not self._natural_voice() or self.talk_language()[0] != "en":
+            return  # these texts are English: an Urdu talk writes and says its own
         for text in self.db.get_explanations(deck_id).values():
             self.speaker.prefetch(split_sentences(text))  # type: ignore[union-attr]
         deck = self.db.get_deck(deck_id)
@@ -679,14 +693,14 @@ class FlickService:
             self._plans.pop(key, None)
             slide = next((s for s in deck.slides if s.number == number), None)
             return (f"Let's look at {slide.title}." if slide and slide.title else ""), None
-        if lessons.base_style(style) == "class":
+        if lessons.base_style(style) == "class" and lessons.language_of(style) == "en":
             return text, self._drawing_job(deck, number, style, text)
         done: asyncio.Future = asyncio.get_running_loop().create_future()
         done.set_result(drawing)
         return text, done
 
     async def _make_plan(self, deck: Deck, number: int, style: str) -> tuple[str, Optional[dict]]:
-        if lessons.base_style(style) == "class":
+        if lessons.base_style(style) == "class" and lessons.language_of(style) == "en":
             return await self.slide_explanation(deck, number), None
         cached = self.db.get_lesson(deck.id, number, style)
         if cached is not None:
@@ -694,7 +708,9 @@ class FlickService:
         previous = self.db.get_lesson(deck.id, number - 1, style)
         with usage.tagged(kind="talk", sink=[]) as tag:
             raw = await self.llm.complete(
-                lessons.lesson_system(style, study=lessons.is_study(style)),
+                lessons.lesson_system(
+                    style, study=lessons.is_study(style), language=lessons.language_of(style), female=self.talk_language()[1]
+                ),
                 lessons.lesson_message(deck, number, previous),
                 lessons.LESSON_MAX_TOKENS,
             )
@@ -723,7 +739,7 @@ class FlickService:
             async def decide() -> Optional[dict]:
                 slide = next((s for s in deck.slides if s.number == number), None)
                 raw = await self.llm.complete(
-                    lessons.draw_system(style, asked=False),
+                    lessons.draw_system(style, asked=False, language=lessons.language_of(style), female=self.talk_language()[1]),
                     lessons.draw_message(deck, slide, text, None),
                     lessons.DRAW_MAX_TOKENS,
                 )
@@ -880,7 +896,9 @@ class FlickService:
             ask += " You are talking to one student, like a friend sitting next to them."
 
         async def make() -> str:
-            return await engine.explain_slide(self.llm, deck, number, ask)
+            return await engine.explain_slide(
+                self.llm, deck, number, ask, language=lessons.language_of(plan_key), female=self.talk_language()[1]
+            )
 
         with usage.tagged(kind="explain", slide=number, style=plan_key, deck_id=deck.id):
             return asyncio.ensure_future(make())
@@ -895,7 +913,8 @@ class FlickService:
 
         async def make() -> Optional[dict]:
             raw = await self.llm.complete(
-                lessons.draw_system(style, asked=True), lessons.draw_message(deck, slide, context, ask), lessons.DRAW_MAX_TOKENS
+                lessons.draw_system(style, asked=True, language=lessons.language_of(style), female=self.talk_language()[1]),
+                lessons.draw_message(deck, slide, context, ask), lessons.DRAW_MAX_TOKENS
             )
             return lessons.parse_drawing(raw)
 
@@ -924,7 +943,7 @@ class FlickService:
         try:
             with usage.tagged(kind="example", card=card, slide=number, style=style):
                 raw = await self.llm.complete(
-                    lessons.draw_system(style, asked=True),
+                    lessons.draw_system(style, asked=True, language=self.talk_language()[0], female=self.talk_language()[1]),
                     lessons.draw_message(deck, slide, context, question),
                     lessons.DRAW_MAX_TOKENS,
                 )

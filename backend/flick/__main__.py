@@ -35,6 +35,12 @@ def default_data_dir() -> Path:
     return base / "Flick"
 
 
+def _voice_for(settings) -> tuple[str, float]:
+    """English talks use the English voice; Urdu and Urdu + English talks use the Urdu voice."""
+    voice = settings.urdu_voice if settings.talk_language != "en" else settings.voice_name
+    return voice, settings.voice_speed
+
+
 def build_service(data_dir: Path) -> FlickService:
     data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(data_dir / "flick.db")
@@ -46,7 +52,7 @@ def build_service(data_dir: Path) -> FlickService:
     speaker = Speaker(
         KokoroVoice(models / "voice"),
         cache_dir=data_dir / "voice-cache",
-        settings=lambda: (db.get_settings().voice_name, db.get_settings().voice_speed),
+        settings=lambda: _voice_for(db.get_settings()),
     )
     return FlickService(
         db,

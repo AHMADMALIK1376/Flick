@@ -29,7 +29,13 @@ from .pptx_reader import PptxError
 from .service import FlickService, UserError
 from .transcribe import AudioUnreadable, TranscriberUnavailable
 from .lessons import STYLES
-from .voice import VOICES, split_sentences
+from .voice import URDU_VOICES, VOICES, split_sentences
+
+VOICE_TEST_LINES = {
+    "en": "Hi, I'm Flick. This is how I will sound in your class.",
+    "ur": "السلام علیکم، میں فلک ہوں۔ کلاس میں میری آواز ایسی ہوگی۔",
+    "mix": "Hi، میں Flick ہوں۔ Class میں میری voice ایسی ہوگی۔",
+}
 from .text import SlideTarget
 
 #: Largest .pptx accepted by upload.
@@ -141,6 +147,11 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             del changes["anthropic_api_key"]
         if "model" in changes and changes["model"] not in {m["id"] for m in MODELS}:
             raise HTTPException(status_code=400, detail="Unknown model.")
+        if "urdu_voice" in changes and changes["urdu_voice"] not in {v for v, _ in URDU_VOICES}:
+            raise HTTPException(status_code=400, detail="Unknown Urdu voice.")
+        # Urdu talks need the mic to understand Urdu too (English-only recognition can't).
+        if changes.get("talk_language") in ("ur", "mix") and service.db.get_settings().language == "en":
+            changes.setdefault("language", "auto")
         service.db.update_settings(changes)
         return public_settings()
 
@@ -328,6 +339,10 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
     def voices() -> list[dict]:
         return [{"id": v, "name": name} for v, name in VOICES]
 
+    @app.get("/urdu-voices", dependencies=auth)
+    def urdu_voices() -> list[dict]:
+        return [{"id": v, "name": name} for v, name in URDU_VOICES]
+
     @app.post("/voice/stop", dependencies=auth, status_code=204)
     async def voice_stop():
         """The Stop button: Flick goes quiet at once (a talk in progress is paused)."""
@@ -349,7 +364,8 @@ def create_app(service: FlickService, token: str, on_ready: Optional[Callable[[]
             status = service.voice_status()
             raise HTTPException(status_code=400, detail=status["error"] or "Flick's voice is still getting ready. Try again in a minute.")
         service.speaker.stop()
-        service.speaker.say("Hi, I'm Flick. This is how I will sound in your class.")
+        language = service.db.get_settings().talk_language
+        service.speaker.say(VOICE_TEST_LINES.get(language, VOICE_TEST_LINES["en"]))
 
     # ── Live ────────────────────────────────────────────────────────────────
 

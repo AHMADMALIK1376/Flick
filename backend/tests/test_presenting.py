@@ -44,10 +44,12 @@ def test_split_sentences():
     assert split_sentences("One. Two? Three! four") == ["One.", "Two?", "Three! four"]
 
 
-def test_can_voice_english_not_urdu_script():
+def test_can_voice_english_and_urdu():
     assert can_voice("Row level security keeps data safe.")
     assert can_voice("Yeh slide RLS ke baare mein hai.")  # Roman Urdu
-    assert not can_voice("یہ سلائیڈ کس بارے میں ہے؟")
+    assert can_voice("یہ سلائیڈ کس بارے میں ہے؟")  # Urdu script (spoken with the Urdu voice)
+    assert can_voice("تو basically، database ہر user کو اپنی rows دکھاتا ہے۔")  # the mix
+    assert not can_voice("这是什么")
 
 
 @pytest.mark.parametrize(

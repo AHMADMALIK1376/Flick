@@ -5,16 +5,18 @@ import type { Board } from '../api/types';
 
 export const BOARD_OPTIONS: { value: Board; label: string; hint: string }[] = [
   { value: 'auto', label: 'Only when needed', hint: 'Flick draws when an idea is hard to picture.' },
-  { value: 'draw', label: '✏️ Draw every slide', hint: 'Every slide gets a picture of its idea on the board.' },
-  { value: 'example', label: '💡 Example every slide', hint: 'Every slide gets a real-life example, drawn on the board.' },
+  { value: 'draw', label: 'Draw every slide', hint: 'Every slide gets a picture of its idea on the board.' },
+  { value: 'example', label: 'Example every slide', hint: 'Every slide gets a real-life example, drawn on the board.' },
 ];
 
 /** "story+example" → "Story mode · Example every slide" */
 export function styleLabel(style: string | null | undefined, names: Record<string, string>): string {
   if (!style) return '';
-  const [base, board] = style.split('+');
+  const [main, language] = style.split('#');
+  const [base, board] = main.split('@')[0].split('+');
   const option = BOARD_OPTIONS.find((o) => o.value === board);
-  return `${names[base] ?? base}${option ? ` · ${option.label.replace(/^\S+ /, '')}` : ''}`;
+  const lang = language === 'ur' ? ' · Urdu' : language === 'mix' ? ' · Urdu + English' : '';
+  return `${names[base] ?? base}${option ? ` · ${option.label}` : ''}${lang}`;
 }
 
 export function BoardPicker({
@@ -35,7 +37,7 @@ export function BoardPicker({
   if (style === 'visual') {
     return (
       <Text fz={13} c={muted} mt={10}>
-        ✏️ Visual mode draws a real-life example on every slide.
+        Visual mode draws a real-life example on every slide.
       </Text>
     );
   }
