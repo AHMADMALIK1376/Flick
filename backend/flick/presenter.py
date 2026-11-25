@@ -32,8 +32,11 @@ State = Literal["idle", "starting", "presenting", "paused", "finished", "error"]
 QUESTION_WAIT_S = 75.0  # speak, read it back, edit, press ✓
 #: Breath between slides.
 SLIDE_GAP_S = 0.6
-#: After a slide was explained, how long to wait for a drawing that is still being planned.
-DRAWING_WAIT_S = 6.0
+#: After a slide was explained, how long to wait (silently) for a drawing that may come. Short: a
+#: drawing that isn't ready by then is skipped rather than leaving the room in silence.
+DRAWING_WAIT_S = 2.5
+#: In "draw every slide" talks the drawing always comes: Flick says it is sketching, then waits this long.
+PROMISED_DRAWING_WAIT_S = 12.0
 
 # What Flick says between slides. Lines that come up more than once in a talk rotate, so Flick
 # never sounds like a recording ("Now, let's continue." five times in a row is what robots do).
@@ -244,6 +247,7 @@ class Presenter:
         self._detour = None
         self._said_count = {}
         self.language = self.service.talk_language()[0]  # fixed for the whole talk
+        self._prevoice_own_lines()
         self._unpaused.set()
         self.state = "starting"
         meter = self.service.usage
@@ -363,6 +367,8 @@ class Presenter:
 
     async def _speak(self, segments: list[_Segment]) -> None:
         """Says the segments in order; after a pause it repeats the sentence that was cut off."""
+        if len(segments) > 1:  # make the audio for all of them now, so they follow without gaps
+            self.service.speaker.prefetch([seg.text for seg in segments if seg.text], urgent=True)  # type: ignore[union-attr]
         i = 0
         while i < len(segments):
             await self._wait_if_paused()
@@ -376,6 +382,20 @@ class Presenter:
             if not segment.text or await self._say(segment.text):
                 i += 1
 
+    def _prevoice_own_lines(self) -> None:
+        """Flick's own short lines (greeting, carrying on, drawing intros, closing) are made once and
+        kept on disk; doing it at the start means none of them ever waits to be made."""
+        speaker = self.service.speaker
+        if speaker is None or not self.service._natural_voice():
+            return
+        lines = LINES.get(self.language) or _ENGLISH
+        texts: list[str] = []
+        for value in lines.values():
+            for line in value if isinstance(value, list) else [value]:
+                if "{" not in str(line):
+                    texts.append(str(line))
+        speaker.prefetch(texts)
+
     def _line(self, kind: str, **values) -> str:
         """One of Flick's own lines, in the talk's language. Lists rotate; {n} is filled in."""
         lines = LINES.get(self.language, {}).get(kind) or _ENGLISH.get(kind) or ""
@@ -388,12 +408,19 @@ class Presenter:
         self._said_count[kind] = n + 1
         return lines[n % len(lines)]
 
+    def draw_intro_lines(self) -> list[str]:
+        """Every way this talk may introduce a drawing (they rotate), so the next one is ready."""
+        lines = LINES.get(self.language, {}).get(self._draw_kind()) or _ENGLISH.get(self._draw_kind()) or []
+        return [str(line) for line in (lines if isinstance(lines, list) else [lines])]
+
+    def _draw_kind(self) -> str:
+        base = lessons.base_style(self.style)
+        return f"draw_{base}" if f"draw_{base}" in _ENGLISH else "draw"
+
     def _drawing_segments(self, drawing: dict, slide: int, intro: bool = True) -> list[_Segment]:
         canvas_id = str(uuid.uuid4())
         opened = {"action": "open", "id": canvas_id, "slide": slide, "target": self.target, **drawing}
-        base = lessons.base_style(self.style)
-        kind = f"draw_{base}" if f"draw_{base}" in _ENGLISH else "draw"
-        segments = [_Segment(self._line(kind) if intro else "", opened)]
+        segments = [_Segment(self._line(self._draw_kind()) if intro else "", opened)]
         for number, step in enumerate(drawing["steps"], start=1):
             event = {"action": "step", "id": canvas_id, "step": number, "say": step["say"], "target": self.target}
             for k, sentence in enumerate(split_sentences(step["say"])):
@@ -455,6 +482,12 @@ class Presenter:
                     if detour and detour.board != "auto":
                         await self._speak([_Segment(self._line(f"asked_{detour.board}"))])
                         drawing = await _result(drawing_job, ASKED_DRAWING_WAIT_S)
+                        if drawing:
+                            await self._speak(self._drawing_segments(drawing, n, intro=False))
+                    elif drawing_job is not None and not drawing_job.done() and lessons.always_draws(self.style):
+                        # Still being planned, but promised: say so instead of going quiet.
+                        await self._speak([_Segment(self._line(self._draw_kind()))])
+                        drawing = await _result(drawing_job, PROMISED_DRAWING_WAIT_S)
                         if drawing:
                             await self._speak(self._drawing_segments(drawing, n, intro=False))
                     else:

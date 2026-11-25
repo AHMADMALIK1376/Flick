@@ -32,7 +32,8 @@ export function Whiteboard({ drawing, step, animate = true, style }: Props) {
   const visible = drawing.elements.filter((e) => e.step <= step);
   // Order within the current step: shapes first, then arrows, a beat apart.
   let order = 0;
-  const delay = (el: DrawingElement) => (animate && el.step === step ? `${(order++ * 0.35).toFixed(2)}s` : '0s');
+  // One new part after another, a quarter of a second apart (like a hand moving across the board).
+  const delay = (el: DrawingElement) => (animate && el.step === step ? `${(order++ * 0.25).toFixed(2)}s` : '0s');
   const fresh = (el: DrawingElement) => (animate && el.step === step ? ' wb-new' : '');
 
   const visibleShapes = visible.filter((e): e is Shape => e.type !== 'arrow');

@@ -394,3 +394,43 @@ async def test_stop_while_a_sentence_is_being_made_keeps_the_speaker_working(tmp
     assert await first is False
     assert await asyncio.wait_for(speaker.say("Next one."), 3) is True
     speaker.close()
+
+
+async def test_stop_while_now_audio_is_queued_does_not_freeze(tmp_path):
+    """Stop cancels queued audio; that must not deadlock the speaker (it once could)."""
+    import threading
+
+    from .conftest import FakeVoice
+
+    gate = threading.Event()
+
+    class HeldVoice(FakeVoice):
+        def synthesize(self, text, voice, speed):
+            gate.wait(2)
+            return super().synthesize(text, voice, speed)
+
+    speaker = make_speaker(tmp_path, voice=HeldVoice())
+    speaker.prefetch([f"Sentence number {i}." for i in range(5)], urgent=True)  # several queued
+    speaker.prefetch(["Later one."])  # waits for the urgent ones
+    done = threading.Event()
+
+    def press_stop():
+        speaker.stop()
+        done.set()
+
+    threading.Thread(target=press_stop).start()
+    assert done.wait(2), "Stop froze"
+    gate.set()
+    assert await asyncio.wait_for(speaker.say("Still working."), 5) is True
+    speaker.close()
+
+
+def test_long_sentences_are_spoken_in_moderate_pieces():
+    from flick.voice import speech_chunks
+
+    long = ("Row level security means the database itself checks every query and only returns the rows "
+            "that this particular user is allowed to see because of a policy.")
+    pieces = speech_chunks(long)
+    assert len(pieces) >= 2 and all(len(p.split()) <= 14 for p in pieces)
+    assert " ".join(pieces) == long  # nothing lost or changed
+    assert speech_chunks("Hi everyone! Thanks for being here.") == ["Hi everyone! Thanks for being here."]

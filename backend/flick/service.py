@@ -694,10 +694,26 @@ class FlickService:
             slide = next((s for s in deck.slides if s.number == number), None)
             return (f"Let's look at {slide.title}." if slide and slide.title else ""), None
         if lessons.base_style(style) == "class" and lessons.language_of(style) == "en":
-            return text, self._drawing_job(deck, number, style, text)
-        done: asyncio.Future = asyncio.get_running_loop().create_future()
-        done.set_result(drawing)
-        return text, done
+            job = self._drawing_job(deck, number, style, text)
+        else:
+            job = asyncio.get_running_loop().create_future()
+            job.set_result(drawing)
+        job.add_done_callback(lambda done: self._voice_drawing_early(done, number))
+        return text, job
+
+    def _voice_drawing_early(self, job: "asyncio.Future", number: int) -> None:
+        """A drawing is ready: make the audio for its narration now, while Flick is still talking, so
+        the steps follow each other without waiting. For the slide on screen it comes right after
+        the slide's own sentences; for a later slide, in spare time."""
+        if job.cancelled() or job.exception() is not None or not self.speaker or not self._natural_voice():
+            return
+        drawing = job.result()
+        if drawing:
+            says = [sentence for step in drawing.get("steps", []) for sentence in split_sentences(step.get("say", ""))]
+            now = self.presenter.active and self.presenter.slide == number
+            if now:  # "Let me draw this..." comes first: have it ready too
+                says = self.presenter.draw_intro_lines() + says
+            self.speaker.prefetch(says, urgent=now)
 
     async def _make_plan(self, deck: Deck, number: int, style: str) -> tuple[str, Optional[dict]]:
         if lessons.base_style(style) == "class" and lessons.language_of(style) == "en":

@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import wave
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -74,6 +75,42 @@ def split_sentences(text: str) -> list[str]:
     """Splits a paragraph into sentences to speak one at a time."""
     parts = [p.strip() for p in _SENTENCE_END.split(text.strip())]
     return [p for p in parts if p]
+
+
+#: Longest piece spoken as one clip. Making a clip takes about 3/4 of its playing time on a laptop,
+#: so a long sentence after a short one leaves a silence while it is still being made. Pieces of
+#: similar, moderate length keep the voice flowing: each is ready before the one before it ends.
+CHUNK_WORDS = 13
+_CLAUSE_END = re.compile(r"(?<=[,;:\u060c\u061b])\s+")
+_JOIN_WORDS = re.compile(
+    r"\s+(?=(?:and|but|so|because|which|when|while|where|that's why|then|اور|لیکن|کیونکہ|کہ|تو|جب|جو)\s)",
+    re.IGNORECASE,
+)
+
+
+def speech_chunks(sentence: str, max_words: int = CHUNK_WORDS) -> list[str]:
+    """A long sentence → pieces of moderate length, split where a speaker would breathe
+    (after a comma, before "and / but / because..."). Short sentences stay whole."""
+    words = sentence.split()
+    if len(words) <= max_words:
+        return [sentence]
+    clauses = [c for c in _CLAUSE_END.split(sentence) if c.strip()]
+    pieces: list[str] = []
+    for clause in clauses:  # a clause that is still too long: split before a joining word
+        if len(clause.split()) > max_words * 1.4:
+            parts = [p for p in _JOIN_WORDS.split(clause) if p.strip()]
+            pieces.extend(parts if len(parts) > 1 else [clause])
+        else:
+            pieces.append(clause)
+    chunks: list[str] = []
+    for piece in pieces:  # join small pieces back up to a comfortable length
+        if chunks and len(chunks[-1].split()) + len(piece.split()) <= max_words:
+            chunks[-1] = f"{chunks[-1]} {piece}"
+        else:
+            chunks.append(piece)
+    if len(chunks) > 1 and len(chunks[-1].split()) < 3:  # never end on a tiny stub
+        chunks[-2] = f"{chunks[-2]} {chunks.pop()}"
+    return [c.strip() for c in chunks if c.strip()]
 
 
 def is_urdu_voice(voice: str) -> bool:
@@ -257,6 +294,13 @@ class Speaker:
         self._spare = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flick-voice-ahead")
         self._making: dict[str, tuple[Future, bool]] = {}  # key -> (future, urgent)
         self._making_lock = threading.Lock()
+        # "Needed now" audio goes first: "needed later" work waits while any is being made, so the
+        # two never share the processor (on a 2-core laptop sharing doubles every gap).
+        self._urgent_pending = 0
+        # Its own lock: the counter changes when a job finishes or is cancelled, and a cancel can
+        # happen while _making_lock is held (stop) — sharing that lock would freeze the speaker.
+        self._count_lock = threading.Lock()
+        self._wanted_now: set[str] = set()
         self._queue: list[_Item] = []
         self._wake: Optional[asyncio.Event] = None
         self._idle: Optional[asyncio.Event] = None
@@ -274,7 +318,24 @@ class Speaker:
         return self.voice.ready()
 
     def say(self, text: str) -> "asyncio.Future[bool]":
-        """Queues one sentence. The future resolves when it has been said (True) or cut off (False)."""
+        """Queues one sentence (spoken in moderate pieces, see speech_chunks). The future resolves
+        when all of it has been said (True) or it was cut off (False)."""
+        chunks = speech_chunks(text)
+        if len(chunks) == 1:
+            return self._say_one(text)
+        loop = asyncio.get_running_loop()
+        parts = [self._say_one(chunk) for chunk in chunks]
+        whole: asyncio.Future[bool] = loop.create_future()
+
+        def finished(_):
+            if not whole.done() and all(p.done() for p in parts):
+                whole.set_result(all(p.result() for p in parts))
+
+        for part in parts:
+            part.add_done_callback(finished)
+        return whole
+
+    def _say_one(self, text: str) -> "asyncio.Future[bool]":
         loop = asyncio.get_running_loop()
         if self._closed:  # shutting down: nothing more is said
             done = loop.create_future()
@@ -293,7 +354,8 @@ class Speaker:
             return
         for text in texts:
             if can_voice(text):
-                self._make(text, urgent=urgent)
+                for chunk in speech_chunks(text):
+                    self._make(chunk, urgent=urgent)
 
     def stop(self) -> None:
         """Stops at once: the sentence playing now is cut and the queue is emptied."""
@@ -351,17 +413,37 @@ class Speaker:
                 failed = future.cancelled() or (future.done() and future.exception() is not None)
                 waiting_in_spare = not was_urgent and not future.running() and not future.done()
                 if not failed and not (urgent and waiting_in_spare):
+                    if urgent and not was_urgent:
+                        self._wanted_now.add(key)  # already started as "later": stop holding it back
                     return future
                 if waiting_in_spare:
                     future.cancel()  # needed now: jump the queue
-            pool = self._urgent if urgent else self._spare
-            future = pool.submit(self._synthesize_to_file, key, text)
+            if urgent:
+                with self._count_lock:
+                    self._urgent_pending += 1
+                future = self._urgent.submit(self._synthesize_to_file, key, text)
+                future.add_done_callback(self._urgent_finished)
+            else:
+                future = self._spare.submit(self._synthesize_when_free, key, text)
             self._making[key] = (future, urgent)
             if len(self._making) > 2000:  # keep the dict small; files stay cached on disk
                 for old in list(self._making)[:1000]:
                     if self._making[old][0].done():
                         del self._making[old]
             return future
+
+    def _urgent_finished(self, _future: Future) -> None:
+        with self._count_lock:
+            self._urgent_pending = max(0, self._urgent_pending - 1)
+
+    def _synthesize_when_free(self, key: str, text: str) -> _Clip:
+        """ "Later" work: wait until no "now" audio is being made (unless this one became needed now)."""
+        waited = 0.0
+        while self._urgent_pending > 0 and key not in self._wanted_now and not self._closed and waited < 120:
+            time.sleep(0.03)
+            waited += 0.03
+        self._wanted_now.discard(key)
+        return self._synthesize_to_file(key, text)
 
     def _synthesize_to_file(self, key: str, text: str) -> _Clip:
         path = self.cache_dir / f"{key}.wav"
