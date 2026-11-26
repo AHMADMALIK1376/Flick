@@ -47,7 +47,7 @@ from .text import (
     parse_slide_command,
 )
 from .transcribe import Transcriber
-from .voice import Speaker, can_voice, split_sentences
+from .voice import ANSWERS, SOON, Speaker, can_voice, split_sentences
 
 #: Said while Flick searches the web, so the room isn't silent.
 #: Said while Flick searches the web, so the room isn't left in silence. Rotates.
@@ -111,6 +111,7 @@ class FlickService:
         self.presenter = Presenter(self)
         #: Flick's voice changed since these decks were prepared: their explanations were reset.
         self.voice_refreshed = db.refresh_spoken_text(prompts.VOICE_VERSION)
+        db.brisker_voice()
         self._plans: dict[tuple[str, int, str], asyncio.Task] = {}  # slide plans being made
         self._drawings: dict[tuple[str, int, str], asyncio.Task] = {}  # drawing decisions being made
         self._narration: Optional[asyncio.Task] = None  # a drawing being explained on request
@@ -625,7 +626,7 @@ class FlickService:
             self.speaker.prefetch(split_sentences(text))  # type: ignore[union-attr]
         deck = self.db.get_deck(deck_id)
         for q in deck.predicted if deck else []:
-            self.speaker.prefetch(split_sentences(q.answer))  # type: ignore[union-attr]
+            self.speaker.prefetch(split_sentences(q.answer), priority=ANSWERS)  # type: ignore[union-attr]
 
     # ── Presenting ("Flick, present this for me") ───────────────────────────
 
@@ -711,9 +712,9 @@ class FlickService:
         if drawing:
             says = [sentence for step in drawing.get("steps", []) for sentence in split_sentences(step.get("say", ""))]
             now = self.presenter.active and self.presenter.slide == number
-            if now:  # "Let me draw this..." comes first: have it ready too
+            if self.presenter.active:  # "Let me draw this..." comes first: have it ready too
                 says = self.presenter.draw_intro_lines() + says
-            self.speaker.prefetch(says, urgent=now)
+            self.speaker.prefetch(says, urgent=now, priority=SOON)
 
     async def _make_plan(self, deck: Deck, number: int, style: str) -> tuple[str, Optional[dict]]:
         if lessons.base_style(style) == "class" and lessons.language_of(style) == "en":
@@ -777,7 +778,7 @@ class FlickService:
             try:
                 text, drawing_job = await self.slide_plan(deck, number, style)
                 if self.speaker:
-                    self.speaker.prefetch(split_sentences(text))
+                    self.speaker.prefetch(split_sentences(text), priority=SOON)
                 if drawing_job is not None:
                     await drawing_job
             except Exception:

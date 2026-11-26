@@ -48,11 +48,11 @@ Use the same small cast across the whole deck (e.g. Ali and Sara, two university
 teacher Ms. Ayesha, a chai dhaba, a cricket match, a family business). Each slide is the next scene: show a
 moment with a little tension ("Ali is sure his marks are private... until Sara sees them on her screen"),
 let the scene make the idea obvious, then step out of the story and say plainly what the idea is.
-Warm and vivid, never childish.""",
+Keep each scene short: two or three sentences of story, then the idea in one plain sentence. Never childish.""",
     "professional": """PROFESSIONAL MODE. Like a senior engineer explaining to a sharp new colleague over coffee:
-precise, but still a person talking. Use the correct technical terms (and say what each means in a few words),
-give one real-world industry example (a bank, an app, a hospital, a company like Daraz or Careem), and mention
-the mistake people commonly make with it ("the classic mistake here is...").""",
+clear and precise, but still a person talking. Use the correct technical terms (and say what each means in a
+few words), give one short real-world industry example (a bank, an app, a hospital, a company like Daraz or
+Careem), and mention the most common mistake in one sentence.""",
     "exam": """EXAM MODE. Like a senior who topped this course helping a friend the night before the exam:
 focused, quick, encouraging. Say the two or three points that actually get marks ("First... second..."),
 any definition they must know word-for-word ("write this exactly:"), one memory trick that's easy to picture,
@@ -62,7 +62,7 @@ not get marks.""",
 slide, pick ONE concrete daily-life example that makes the idea obvious (a chai dhaba, a cricket team, a bank
 queue, a WhatsApp group, a university canteen, a rickshaw ride) and draw it. The drawing does the teaching:
 its steps carry the explanation. What you say before the drawing is only a short lead-in (1-2 sentences,
-25-45 words) that names the idea and the example, e.g. "Encryption is like passing a note in a secret code.
+15-30 words) that names the idea and the example, e.g. "Encryption is like passing a note in a secret code.
 Let me draw it." The last step names the idea in one plain sentence.""",
 }
 
@@ -77,10 +77,10 @@ in the requested style.
 {style_guide}
 
 Rules:
-- About 70-130 words (under a minute of speech); shorter for a simple slide. Spoken English that Pakistani
-  students find natural (a Roman Urdu word is fine if the deck uses them).
-- Slide 1: open warmly in your own words, with a reason to care about the topic. After slide 1 never greet again;
-  continue from what you said last time, with a fresh link each time (never the same one twice in a row).
+- About 50-100 words (30 to 40 seconds of speech); shorter for a simple slide, never padded. Simple spoken
+  English that Pakistani students find natural (a Roman Urdu word is fine if the deck uses them).
+- Slide 1: one short greeting, then a reason to care about the topic. After slide 1 never greet again;
+  continue from what you said last time with a short link (never the same one twice in a row).
 - Use only what the slide supports plus well-known general knowledge. If the slide is only a title, agenda or
   thank-you slide, say one or two short natural sentences and move on.
 
@@ -110,12 +110,12 @@ DRAW_RULES = f"""Drawing rules (the whiteboard is {CANVAS_W} x {CANVAS_H}, origi
   Labels: at most 4 words. Keep everything 40px inside the edges, leave at least 60px between shapes,
   no overlaps. Use the whole board: spread the scene left to right (or top to bottom) in the order
   things happen; a title row is not needed (the title is shown above the board).
-- "steps": 4-7 steps. Step 1 sets the scene, each next step adds the next part (every element has the
-  step number when it appears). Each step has "say": 1-2 short spoken sentences, said like a teacher
-  sketching on the board while talking: "Okay, so here's Ali, standing at the bank counter." / "Now watch
-  what happens when he asks for Sara's balance..." / "See this arrow? That's the request going in."
-  Never describe the drawing mechanically ("A box labelled X appears"). The LAST step adds one text element
-  at the bottom (y about 550) with the takeaway in a few words, and its "say" lands the idea plainly.
+- "steps": 3-5 steps. Step 1 sets the scene, each next step adds the next part (every element has the
+  step number when it appears). Each step has "say": ONE short spoken sentence (at most about 18 words),
+  said like a teacher sketching on the board: "Here's Ali at the bank counter." / "He asks for Sara's
+  balance." / "This arrow is his request going in." No "..." or dashes. Never describe the drawing
+  mechanically ("A box labelled X appears"). The LAST step adds one text element at the bottom (y about
+  550) with the takeaway in a few words, and its "say" states the idea plainly.
   In story style the drawing shows the story's scene.
 - Drawing object: {{"title":"Short title","elements":[...],"steps":[{{"say":"..."}}, ...]}}"""
 
@@ -208,7 +208,7 @@ def style_guide(style: str) -> str:
 _LESSON_DRAW_WHEN = "Then decide whether a whiteboard drawing would REALLY help this slide (see the drawing rules)."
 _LESSON_DRAW_VISUAL = """Then ALWAYS make the drawing, except for a pure title, agenda or thank-you slide (drawing null).
 The "Draw ONLY when..." rule below does not apply here: every content slide gets its drawing.
-In visual mode "text" is only the short lead-in (25-45 words); in other styles keep the style's length."""
+In visual mode "text" is only the short lead-in (15-30 words); in other styles keep the style's length."""
 
 
 def lesson_system(style: str, study: bool = True, language: str = "en", female: bool = True) -> str:

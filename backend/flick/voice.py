@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import heapq
+import itertools
 import re
 import shutil
 import subprocess
@@ -88,9 +90,31 @@ _JOIN_WORDS = re.compile(
 )
 
 
+_ELLIPSIS_ALONE = re.compile(r"^(?:\.{3}|…)\s*|\s*(?:\.{3}|…)\s*$")
+_ELLIPSIS = re.compile(r"\s*(?:\.{3,}|…)\s*")
+_DASH = re.compile(r"\s+[—–-]{1,2}\s+|—")
+
+
+def speakable(sentence: str) -> str:
+    """Text as the voice should say it. "..." and dashes make the voice stop for a long beat (it
+    reads them as a dramatic pause), which in a talk sounds like Flick froze: they become commas."""
+    text = _ELLIPSIS_ALONE.sub(lambda m: "." if m.group(0).strip() and m.start() > 0 else "", sentence.strip())
+    text = _ELLIPSIS.sub(", ", text)
+    text = _DASH.sub(", ", text)
+    text = re.sub(r",\s*([,.!?؟۔])", r"\1", text)  # ", ." → "."
+    text = re.sub(r"([.!?؟۔]),\s*", r"\1 ", text)  # "?, Exactly" → "? Exactly"
+    text = re.sub(r"\s{2,}", " ", text).strip(" ,")
+    if text and text[-1] not in ".!?؟۔" and sentence.rstrip()[-1:] in ("…", "."):
+        text += "."
+    return text
+
+
 def speech_chunks(sentence: str, max_words: int = CHUNK_WORDS) -> list[str]:
     """A long sentence → pieces of moderate length, split where a speaker would breathe
     (after a comma, before "and / but / because..."). Short sentences stay whole."""
+    sentence = speakable(sentence)
+    if not sentence:
+        return []
     words = sentence.split()
     if len(words) <= max_words:
         return [sentence]
@@ -256,6 +280,13 @@ def default_player() -> Player:
 
 # ── Speaker: a queue of sentences, said one after another ──────────────────
 
+#: What audio made ahead of time is for, most needed first. The spare queue makes them in this
+#: order, so the next slide of a running talk is never stuck behind 40 prepared answers.
+SOON = 1  # the next slide of the talk, a drawing about to be narrated
+OWN_LINES = 2  # Flick's own short lines (carrying on, drawing intros, closing)
+LATER = 3  # the whole deck's explanations after preparing
+ANSWERS = 4  # prepared answers to likely questions
+
 
 @dataclass
 class _Clip:
@@ -291,7 +322,11 @@ class Speaker:
         # Two queues: "urgent" for what is about to be said, "spare" for making audio ahead of
         # time (a whole deck after preparing). A live answer never waits behind the spare queue.
         self._urgent = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flick-voice")
-        self._spare = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flick-voice-ahead")
+        # The spare queue: one thread working through a priority list (SOON first, see above).
+        self._spare_jobs: list[tuple[int, int, str, str, Future]] = []
+        self._spare_cv = threading.Condition()
+        self._spare_order = itertools.count()
+        self._spare_thread: Optional[threading.Thread] = None
         self._making: dict[str, tuple[Future, bool]] = {}  # key -> (future, urgent)
         self._making_lock = threading.Lock()
         # "Needed now" audio goes first: "needed later" work waits while any is being made, so the
@@ -321,8 +356,12 @@ class Speaker:
         """Queues one sentence (spoken in moderate pieces, see speech_chunks). The future resolves
         when all of it has been said (True) or it was cut off (False)."""
         chunks = speech_chunks(text)
+        if not chunks:  # nothing to say ("...")
+            done = asyncio.get_running_loop().create_future()
+            done.set_result(True)
+            return done
         if len(chunks) == 1:
-            return self._say_one(text)
+            return self._say_one(chunks[0])  # the cleaned text: the same audio prefetch made
         loop = asyncio.get_running_loop()
         parts = [self._say_one(chunk) for chunk in chunks]
         whole: asyncio.Future[bool] = loop.create_future()
@@ -348,14 +387,38 @@ class Speaker:
         self._wake.set()  # type: ignore[union-attr]
         return item.done
 
-    def prefetch(self, texts: list[str], urgent: bool = False) -> None:
-        """Makes audio ahead of time without playing it. urgent: needed in the next seconds."""
+    def prefetch(self, texts: list[str], urgent: bool = False, priority: int = LATER) -> None:
+        """Makes audio ahead of time without playing it. urgent: needed in the next seconds;
+        otherwise it is made in spare time, most needed first (priority: SOON ... ANSWERS)."""
         if not self.available() or self._closed:
             return
         for text in texts:
             if can_voice(text):
                 for chunk in speech_chunks(text):
-                    self._make(chunk, urgent=urgent)
+                    self._make(chunk, urgent=urgent, priority=priority)
+
+    async def ready(self, texts: list[str], buffer_s: float = 3.0, timeout: float = 5.0) -> None:
+        """Waits (at most `timeout`) until the first `buffer_s` seconds of `texts` are made.
+        Used before a slide starts: a short beat before speaking sounds natural, a stop in the
+        middle of a sentence (a short first line, then a long one still being made) does not.
+        When the slide was made ahead of time (the usual case) this returns at once."""
+        if not self.available() or self._closed:
+            return
+        chunks = [chunk for text in texts if can_voice(text) for chunk in speech_chunks(text)][:4]
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout
+        made = 0.0
+        for chunk in chunks:
+            left = end - loop.time()
+            if made >= buffer_s or left <= 0:
+                return
+            try:
+                clip = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(self._make(chunk, urgent=True), loop=loop)), left)
+            except asyncio.TimeoutError:
+                return
+            except BaseException:  # cancelled by Stop, or could not be made: nothing to wait for
+                return
+            made += clip.seconds
 
     def stop(self) -> None:
         """Stops at once: the sentence playing now is cut and the queue is emptied."""
@@ -387,7 +450,11 @@ class Speaker:
             except RuntimeError:
                 pass  # its event loop is already closed
         self._urgent.shutdown(wait=False, cancel_futures=True)
-        self._spare.shutdown(wait=False, cancel_futures=True)
+        with self._spare_cv:
+            for *_, future in self._spare_jobs:
+                future.cancel()
+            self._spare_jobs.clear()
+            self._spare_cv.notify_all()
 
     # Internals ─────────────────────────────────────────────────────────────
 
@@ -403,7 +470,7 @@ class Speaker:
         voice, speed = self.settings()
         return hashlib.sha1(f"{voice}|{speed:.2f}|{text}".encode("utf-8")).hexdigest()
 
-    def _make(self, text: str, urgent: bool) -> Future:
+    def _make(self, text: str, urgent: bool, priority: int = LATER) -> Future:
         """Starts (or reuses) making the audio for this text. Returns a thread future."""
         key = self._key(text)
         with self._making_lock:
@@ -415,6 +482,8 @@ class Speaker:
                 if not failed and not (urgent and waiting_in_spare):
                     if urgent and not was_urgent:
                         self._wanted_now.add(key)  # already started as "later": stop holding it back
+                    elif waiting_in_spare:
+                        self._spare_push(priority, key, text, future)  # needed sooner: move it up
                     return future
                 if waiting_in_spare:
                     future.cancel()  # needed now: jump the queue
@@ -424,13 +493,42 @@ class Speaker:
                 future = self._urgent.submit(self._synthesize_to_file, key, text)
                 future.add_done_callback(self._urgent_finished)
             else:
-                future = self._spare.submit(self._synthesize_when_free, key, text)
+                future = Future()
+                self._spare_push(priority, key, text, future)
             self._making[key] = (future, urgent)
             if len(self._making) > 2000:  # keep the dict small; files stay cached on disk
                 for old in list(self._making)[:1000]:
                     if self._making[old][0].done():
                         del self._making[old]
             return future
+
+    def _spare_push(self, priority: int, key: str, text: str, future: Future) -> None:
+        """Adds a job to the spare list (again, with a better priority, if it is there already:
+        the worker makes it once and skips the stale entry)."""
+        with self._spare_cv:
+            if self._closed:
+                future.cancel()
+                return
+            heapq.heappush(self._spare_jobs, (priority, next(self._spare_order), key, text, future))
+            if self._spare_thread is None or not self._spare_thread.is_alive():
+                self._spare_thread = threading.Thread(target=self._spare_worker, name="flick-voice-ahead", daemon=True)
+                self._spare_thread.start()
+            self._spare_cv.notify()
+
+    def _spare_worker(self) -> None:
+        while True:
+            with self._spare_cv:
+                while not self._spare_jobs and not self._closed:
+                    self._spare_cv.wait()
+                if self._closed:
+                    return
+                _, _, key, text, future = heapq.heappop(self._spare_jobs)
+            if future.done() or future.running() or not future.set_running_or_notify_cancel():
+                continue  # made already (a stale entry), or cancelled because it was needed now
+            try:
+                future.set_result(self._synthesize_when_free(key, text))
+            except BaseException as err:  # noqa: BLE001 - handed to whoever waits for it
+                future.set_exception(err)
 
     def _urgent_finished(self, _future: Future) -> None:
         with self._count_lock:
