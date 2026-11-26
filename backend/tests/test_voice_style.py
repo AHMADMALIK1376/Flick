@@ -31,7 +31,7 @@ def test_class_and_study_are_spoken_to_differently():
 
 def test_a_full_talk_is_written_as_one_lesson_not_separate_summaries():
     batch = prompts.EXPLAIN_BATCH_SYSTEM
-    assert "ONE teacher giving ONE lesson" in batch and "DIFFERENT kind of link" in batch
+    assert "ONE teacher giving ONE lesson" in batch and "Never reuse the same link phrase" in batch
 
 
 def test_flicks_own_lines_sound_human_and_rotate():

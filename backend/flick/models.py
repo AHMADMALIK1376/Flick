@@ -108,7 +108,7 @@ class Settings(BaseModel):
     # 'natural': Flick's offline neural voice (needed for "present for me"). 'windows': the Windows voice.
     voice: Literal["natural", "windows"] = "natural"
     voice_name: str = "af_heart"
-    voice_speed: float = Field(default=1.0, ge=0.7, le=1.4)
+    voice_speed: float = Field(default=1.1, ge=0.7, le=1.4)  # a teacher's pace (about 170 words a minute)
     # The language Flick explains and answers in: English, Urdu, or Urdu + English mixed
     # (the way Pakistani teachers talk in class).
     talk_language: Literal["en", "ur", "mix"] = "en"

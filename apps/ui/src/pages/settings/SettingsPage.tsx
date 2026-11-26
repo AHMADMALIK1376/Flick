@@ -285,15 +285,15 @@ export function SettingsPage() {
               </Text>
               <Slider
                 min={0.8}
-                max={1.2}
+                max={1.4}
                 step={0.05}
                 value={form.voice_speed}
                 onChange={(v) => set('voice_speed', v)}
                 label={(v) => `${v.toFixed(2)}×`}
                 marks={[
                   { value: 0.8, label: 'Slower' },
-                  { value: 1, label: 'Normal' },
-                  { value: 1.2, label: 'Faster' },
+                  { value: 1.1, label: 'Normal' },
+                  { value: 1.4, label: 'Faster' },
                 ]}
                 color="aqua.6"
                 mb={18}

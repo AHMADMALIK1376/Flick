@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 from .models import Deck
 from . import lessons, usage
-from .voice import split_sentences
+from .voice import OWN_LINES, SOON, split_sentences
 
 if TYPE_CHECKING:
     from .service import FlickService
@@ -30,8 +30,8 @@ State = Literal["idle", "starting", "presenting", "paused", "finished", "error"]
 
 #: If someone raised a hand but no question arrives, continue after this long.
 QUESTION_WAIT_S = 75.0  # speak, read it back, edit, press ✓
-#: Breath between slides.
-SLIDE_GAP_S = 0.6
+#: Breath between slides (the next slide also waits until its first words are ready, see Speaker.ready).
+SLIDE_GAP_S = 0.4
 #: After a slide was explained, how long to wait (silently) for a drawing that may come. Short: a
 #: drawing that isn't ready by then is skipped rather than leaving the room in silence.
 DRAWING_WAIT_S = 2.5
@@ -49,8 +49,8 @@ CONTINUES = [
     "Right, so, where were we? Let's carry on.",
 ]
 CONTINUE = CONTINUES[0]
-CLOSING = "And that's everything from me today. Thank you so much for listening! Any questions? I'm happy to help."
-STUDY_CLOSING = "And that's the whole thing. Nice work sticking with it! Anything you'd like me to go over again?"
+CLOSING = "That's everything from me today. Thank you for listening! Any questions?"
+STUDY_CLOSING = "That's the whole topic. Nice work! Want me to go over anything again?"
 DRAW_INTROS = {
     "story": [
         "Let me draw this part of the story.",
@@ -368,7 +368,11 @@ class Presenter:
     async def _speak(self, segments: list[_Segment]) -> None:
         """Says the segments in order; after a pause it repeats the sentence that was cut off."""
         if len(segments) > 1:  # make the audio for all of them now, so they follow without gaps
-            self.service.speaker.prefetch([seg.text for seg in segments if seg.text], urgent=True)  # type: ignore[union-attr]
+            texts = [seg.text for seg in segments if seg.text]
+            self.service.speaker.prefetch(texts, urgent=True)  # type: ignore[union-attr]
+            # Start once the first pieces are ready: a short beat before speaking sounds natural,
+            # a stop in the middle of a sentence (short first line, long second one) does not.
+            await self.service.speaker.ready(texts)  # type: ignore[union-attr]
         i = 0
         while i < len(segments):
             await self._wait_if_paused()
@@ -389,12 +393,22 @@ class Presenter:
         if speaker is None or not self.service._natural_voice():
             return
         lines = LINES.get(self.language) or _ENGLISH
+        # Only the lines this talk can use, the ones it needs first first: making audio takes about
+        # as long as playing it, so spare time is spent on what will actually be said.
+        kinds = ["study_greeting", "study_closing"] if self.study else ["greeting", "closing"]
+        kinds += ["continue", self._draw_kind(), "asked_draw", "asked_example", "again_same"]
         texts: list[str] = []
-        for value in lines.values():
+        for kind in kinds:
+            value = lines.get(kind) or _ENGLISH.get(kind) or []
             for line in value if isinstance(value, list) else [value]:
                 if "{" not in str(line):
                     texts.append(str(line))
-        speaker.prefetch(texts)
+        speaker.prefetch(texts, priority=OWN_LINES)
+
+    def _closing_line(self) -> str:
+        lines = LINES.get(self.language, {})
+        kind = "study_closing" if self.study else "closing"
+        return str(lines.get(kind) or _ENGLISH[kind])
 
     def _line(self, kind: str, **values) -> str:
         """One of Flick's own lines, in the talk's language. Lists rotate; {n} is filled in."""
@@ -409,9 +423,11 @@ class Presenter:
         return lines[n % len(lines)]
 
     def draw_intro_lines(self) -> list[str]:
-        """Every way this talk may introduce a drawing (they rotate), so the next one is ready."""
-        lines = LINES.get(self.language, {}).get(self._draw_kind()) or _ENGLISH.get(self._draw_kind()) or []
-        return [str(line) for line in (lines if isinstance(lines, list) else [lines])]
+        """The line that will introduce the next drawing (they rotate), so it is ready in time."""
+        kind = self._draw_kind()
+        lines = LINES.get(self.language, {}).get(kind) or _ENGLISH.get(kind) or []
+        lines = [str(line) for line in (lines if isinstance(lines, list) else [lines])]
+        return [lines[self._said_count.get(kind, 0) % len(lines)]] if lines else []
 
     def _draw_kind(self) -> str:
         base = lessons.base_style(self.style)
@@ -471,12 +487,12 @@ class Presenter:
                 if detour and detour.board != "auto":
                     drawing_job = asked
                 service.prefetch_slide_plan(deck, n + 1, self.plan_key)
+                if n == self.total and service.speaker is not None:  # the closing comes next
+                    service.speaker.prefetch([self._closing_line()], priority=SOON)
                 sentences = split_sentences(text)
                 if first and n == 1 and not _GREETS.match(text.strip().lower()):
                     sentences.insert(0, self._line("study_greeting" if self.study else "greeting"))
                 first = False
-                service.speaker.prefetch(sentences, urgent=True)  # type: ignore[union-attr]
-
                 await self._speak([_Segment(s) for s in sentences])
                 if not self._stopped and self._jump is None:
                     if detour and detour.board != "auto":
@@ -517,7 +533,7 @@ class Presenter:
                     await asyncio.sleep(SLIDE_GAP_S)
             if not self._stopped:
                 await self._wait_if_paused()
-                await self._say(self._line("study_closing" if self.study else "closing"))
+                await self._say(self._closing_line())
                 self.state = "finished"
                 self.line = None
                 self.service.usage.close_card(self.usage_card)

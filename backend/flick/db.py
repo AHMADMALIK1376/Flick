@@ -149,6 +149,20 @@ class Database:
             self._conn.commit()
         return bool(had_text)
 
+    def brisker_voice(self) -> None:
+        """Once: the voice's normal speed went from 1.0 to 1.1 (1.0 sounded slow in a talk). A speed
+        still at the old normal moves to the new one; a speed someone picked stays as it is."""
+        key = "__pace_version"
+        with self._lock:
+            done = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            if done is not None:
+                return
+            row = self._conn.execute("SELECT value FROM settings WHERE key = 'voice_speed'").fetchone()
+            if row is not None and abs(float(json.loads(row["value"])) - 1.0) < 1e-6:
+                self._conn.execute("UPDATE settings SET value = ? WHERE key = 'voice_speed'", (json.dumps(1.1),))
+            self._conn.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (key, json.dumps(1)))
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
